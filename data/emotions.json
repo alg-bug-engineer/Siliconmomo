@@ -1,0 +1,144 @@
+{
+  "styles": {
+    "工具推荐": {
+      "keywords": [
+        "神器推荐",
+        "效率工具",
+        "AI工具",
+        "浏览器插件",
+        "办公神器",
+        "免费工具",
+        "必备插件",
+        "生产力工具",
+        "自动化",
+        "智能助手"
+      ],
+      "prompt_template": "你是一个 AI 杂货店主，专注于推荐各类 AI 工具和浏览器插件。\n\n【任务】\n基于关键词「{keyword}」，创作一篇小红书工具推荐笔记。\n\n【要求】\n1. 语气专业但不失亲和力，像推荐好物给朋友\n2. 开头要有吸引力：痛点引入或直接推荐\n3. 突出工具的核心价值和使用场景\n4. 多用Emoji：🚀🔧💡⚡✨🎯\n5. 结构清晰：痛点→工具→功能→使用场景→推荐理由\n6. 字数：150-350字\n7. 标题要吸睛，体现价值点\n\n【输出格式 (JSON Only)】\n{\n    \"title\": \"标题（带emoji）\",\n    \"content\": \"正文...\",\n    \"style\": \"工具推荐\",\n    \"tags\": [\"#AI工具\", \"#效率神器\", \"#浏览器插件\"]\n}",
+      "emoji_pool": ["🚀", "🔧", "💡", "⚡", "✨", "🎯", "🔥", "💻", "🛠️", "⭐"],
+      "tone": "专业/热情/实用"
+    },
+    "功能介绍": {
+      "keywords": [
+        "AI功能",
+        "插件功能",
+        "智能功能",
+        "特色功能",
+        "黑科技",
+        "新功能",
+        "核心功能",
+        "实用功能"
+      ],
+      "prompt_template": "你是一个 AI 杂货店主，擅长介绍工具的特色功能。\n\n【任务】\n基于关键词「{keyword}」，创作一篇小红书功能介绍笔记。\n\n【要求】\n1. 侧重展示功能的独特性和实用性\n2. 用场景化描述让用户理解价值\n3. 多用Emoji：🌟💫✨🎪🎨\n4. 对比传统方式，突出效率提升\n5. 字数：150-350字\n6. 标题突出功能亮点\n\n【输出格式 (JSON Only)】\n{\n    \"title\": \"标题（带emoji）\",\n    \"content\": \"正文...\",\n    \"style\": \"功能介绍\",\n    \"tags\": [\"#AI功能\", \"#黑科技\", \"#效率提升\"]\n}",
+      "emoji_pool": ["🌟", "💫", "✨", "🎪", "🎨", "🔮", "💎", "🎭", "🎪", "🎬"],
+      "tone": "专业/详细/科技感"
+    },
+    "使用教程": {
+      "keywords": [
+        "使用教程",
+        "保姆级教程",
+        "手把手教程",
+        "新手教程",
+        "入门指南",
+        "使用指南",
+        "安装教程",
+        "配置教程"
+      ],
+      "prompt_template": "你是一个 AI 杂货店主，擅长制作简单易懂的使用教程。\n\n【任务】\n基于关键词「{keyword}」，创作一篇小红书使用教程笔记。\n\n【要求】\n1. 步骤清晰，新手友好\n2. 每步都有截图位置标注【截图】\n3. 多用Emoji：📝📸✅💪🎓\n4. 强调操作要点和避坑指南\n5. 字数：200-400字\n6. 标题体现教程价值和难度级别\n\n【输出格式 (JSON Only)】\n{\n    \"title\": \"标题（带emoji）\",\n    \"content\": \"正文...\",\n    \"style\": \"使用教程\",\n    \"tags\": [\"#使用教程\", \"#新手指南\", \"#保姆级\"]\n}",
+      "emoji_pool": ["📝", "📸", "✅", "💪", "🎓", "📚", "🎯", "💡", "🔑", "📌"],
+      "tone": "耐心/清晰/教导性"
+    },
+    "避坑指南": {
+      "keywords": [
+        "避坑",
+        "注意事项",
+        "使用技巧",
+        "隐藏功能",
+        "进阶技巧",
+        "常见问题",
+        "错误解决",
+        "优化设置"
+      ],
+      "prompt_template": "你是一个 AI 杂货店主，乐于分享使用技巧和避坑经验。\n\n【任务】\n基于关键词「{keyword}」，创作一篇小红书避坑指南笔记。\n\n【要求】\n1. 分享真实使用经验和踩坑经历\n2. 给出具体解决方案\n3. 多用Emoji：⚠️🚫✅💡🎯\n4. 语气真诚，像朋友提醒\n5. 字数：150-350字\n6. 标题要有警示性和价值感\n\n【输出格式 (JSON Only)】\n{\n    \"title\": \"标题（带emoji）\",\n    \"content\": \"正文...\",\n    \"style\": \"避坑指南\",\n    \"tags\": [\"#避坑指南\", \"#使用技巧\", \"#干货分享\"]\n}",
+      "emoji_pool": ["⚠️", "🚫", "✅", "💡", "🎯", "🔍", "💪", "📌", "🚨", "✓"],
+      "tone": "真诚/实用/提醒性"
+    },
+    "合集推荐": {
+      "keywords": [
+        "工具合集",
+        "插件合集",
+        "神器合集",
+        "必备工具",
+        "推荐清单",
+        "Top推荐",
+        "精选工具",
+        "工具箱"
+      ],
+      "prompt_template": "你是一个 AI 杂货店主，定期整理工具合集推荐。\n\n【任务】\n基于关键词「{keyword}」，创作一篇小红书合集推荐笔记。\n\n【要求】\n1. 推荐 3-5 个同类工具\n2. 每个工具简要说明核心价值\n3. 给出适用场景推荐\n4. 多用Emoji：🎁📦🎊🌟💎\n5. 结构清晰，易于阅读\n6. 字数：200-400字\n7. 标题体现合集价值\n\n【输出格式 (JSON Only)】\n{\n    \"title\": \"标题（带emoji）\",\n    \"content\": \"正文...\",\n    \"style\": \"合集推荐\",\n    \"tags\": [\"#工具合集\", \"#精选推荐\", \"#神器盘点\"]\n}",
+      "emoji_pool": ["🎁", "📦", "🎊", "🌟", "💎", "🏆", "👑", "💰", "🎪", "🎯"],
+      "tone": "丰富/全面/推荐性"
+    }
+  },
+  "image_prompts": {
+    "工具推荐": [
+      "modern tech workspace, computer screen with AI interface, clean minimal setup, professional lighting, 8K quality",
+      "futuristic dashboard, AI tools interface, holographic elements, blue purple gradient, high tech aesthetic",
+      "clean desktop setup, multiple apps open, productivity tools, modern workspace, soft lighting",
+      "abstract tech background, digital interface, glowing elements, modern design, professional",
+      "workspace with laptop, coffee, plants, cozy productivity atmosphere, warm lighting",
+      "minimalist tech illustration, clean lines, modern aesthetic, flat design",
+      "futuristic UI design, glowing buttons, modern interface, tech aesthetic, 8K",
+      "clean computer setup, dual monitors, productivity apps, professional workspace"
+    ],
+    "功能介绍": [
+      "close-up screenshot of software interface, clean UI, modern design, high detail",
+      "digital interface showcase, feature highlight, modern tech aesthetic, professional",
+      "abstract tech illustration, feature visualization, clean design, glowing elements",
+      "minimalist UI mockup, feature focus, modern design, professional quality",
+      "tech dashboard, data visualization, clean interface, modern aesthetic"
+    ],
+    "使用教程": [
+      "step by step tutorial illustration, clean infographics, modern design, easy to understand",
+      "tutorial screenshot with annotations, clear steps, professional quality",
+      "instructional design, step guide, modern aesthetic, clean layout",
+      "how-to illustration, numbered steps, clean design, professional"
+    ],
+    "避坑指南": [
+      "warning sign illustration, modern tech style, clean design, attention grabbing",
+      "checklist style illustration, clean layout, modern design, professional",
+      "comparison illustration, before and after, clean design, clear messaging",
+      "tips and tricks illustration, modern aesthetic, clean layout"
+    ],
+    "合集推荐": [
+      "collection showcase, multiple items arranged, clean grid layout, modern design",
+      "tool set illustration, organized collection, modern aesthetic, clean layout",
+      "gift box opening style, collection reveal, modern design, professional",
+      "grid layout showcase, multiple tools, clean minimal design, high quality"
+    ]
+  },
+  "comment_templates": {
+    "工具交流": [
+      "这个工具真的好用！🔧",
+      "已收藏，慢慢试 ✨",
+      "求更多类似工具推荐 🙏",
+      "这个插件太赞了！💯",
+      "试试看，感谢分享 🚀",
+      "正好需要这个！💡",
+      "已安装，体验不错 ⭐",
+      "求更新链接 📎"
+    ],
+    "互动提问": [
+      "支持哪些浏览器？🤔",
+      "免费还是付费？💰",
+      "有替代品吗？🔍",
+      "怎么安装？📝",
+      "效果怎么样？⚡"
+    ],
+    "简单互动": [
+      "👍",
+      "🔥",
+      "⭐",
+      "💯",
+      "🚀"
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+# === Python 编译文件 ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# === 虚拟环境 ===
+venv/
+env/
+ENV/
+.venv/
+
+# === IDE 配置 ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# === 日志和数据 ===
+logs/
+*.log
+
+# === 用户数据（包含浏览记录和素材） ===
+data/inspiration.json
+data/drafts.json
+
+# === 下载的资源 ===
+assets/images/
+
+# === 敏感配置 ===
+# 注意：settings.py 包含 API Key，已提交的需要从历史记录中移除
+config/settings.py
+storage_state.json
+
+# === 认证文件 ===
+# 根目录的认证文件
+../xiaohongshu_auth.json
+
+# === 打包和分发 ===
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# === 测试和覆盖率 ===
+.pytest_cache/
+.coverage
+htmlcov/
+
+# === 临时文件 ===
+*.tmp
+*.bak
+*.swp
+.nfs*
+
+# === Jupyter Notebook ===
+.ipynb_checkpoints/
+*.ipynb
+
+# === 其他 ===
+.pytest_cache/
+.env
+.env.local
