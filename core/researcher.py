@@ -60,12 +60,15 @@ class ResearchAgent:
         # 模拟真实用户浏览行为：逐个点击帖子
         research_data = []
         posts_processed = 0
+        consecutive_no_new_posts = 0  # 新增：连续未找到新帖子的次数
+        MAX_RETRY_WITHOUT_NEW_POST = 5  # 新增：最大重试次数
 
         while posts_processed < DEEP_RESEARCH_POST_LIMIT:
             # 1. 检查环境
             if "xiaohongshu.com" not in self.page.url or "search_result" not in self.page.url:
-                self.recorder.log("error", f"❌ [深度研究] 环境偏离: {self.page.url}")
-                break
+                if not await self._recover_from_environment_drift(search_term):
+                    break  # 恢复失败，结束研究
+                continue  # 恢复成功，重新开始循环
 
             # 2. 寻找视口内的帖子
             notes = await self.page.locator(SELECTORS["note_card"]).all()
@@ -78,12 +81,28 @@ class ResearchAgent:
                     self.recorder.log("error", "❌ [深度研究] 未检测到笔记，结束研究")
                     break
 
-            # 3. 选择一个帖子并点击（研究模式：加速浏览）
-            target_note = random.choice(notes[:6])  # 从前6个中随机选择
-            await target_note.scroll_into_view_if_needed()
-            await asyncio.sleep(random.uniform(0.3, 0.5))  # 减半延迟
+            # 3. 寻找未访问的帖子
+            target_note, note_id = await self._find_unvisited_note(notes[:6])
 
-            self.recorder.log("info", f"👆 [深度研究] 点击帖子 {posts_processed + 1}/{DEEP_RESEARCH_POST_LIMIT}")
+            if not target_note:
+                consecutive_no_new_posts += 1
+                if consecutive_no_new_posts >= MAX_RETRY_WITHOUT_NEW_POST:
+                    self.recorder.log("warning", "⚠️ [深度研究] 连续多次无新帖子，可能已抓取完所有相关内容")
+                    break
+                # 当前视口全是已抓取的，滚动加载新内容
+                self.recorder.log("info", "📜 [去重] 当前视口无新帖子，滚动加载...")
+                await self.human.human_scroll(random.randint(800, 1200))
+                await asyncio.sleep(random.uniform(1.5, 2.5))
+                continue
+
+            # 找到新帖子，重置计数器并记录访问
+            consecutive_no_new_posts = 0
+            self.visited_note_ids.add(note_id)
+
+            await target_note.scroll_into_view_if_needed()
+            await asyncio.sleep(random.uniform(0.3, 0.5))
+
+            self.recorder.log("info", f"👆 [深度研究] 点击帖子 {posts_processed + 1}/{DEEP_RESEARCH_POST_LIMIT} (ID: {note_id[:8]}...)")
             await target_note.click()
 
             # 4. 等待详情页加载
