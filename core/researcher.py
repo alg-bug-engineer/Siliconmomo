@@ -626,41 +626,6 @@ class ResearchAgent:
 
         return "".join(prompt_parts)
 
-    async def _transcribe_video(self, video_local_path: Path) -> str:
-        """Sends a local video file to the ASR server for transcription."""
-        if not ASR_SERVER_URL:
-            self.recorder.log("warning", "ASR_SERVER_URL is not configured. Skipping video transcription.")
-            return ""
-
-        if not video_local_path.exists():
-            self.recorder.log("warning", f"Video file not found for transcription: {video_local_path}")
-            return ""
-
-        self.recorder.log("info", f"Sending {video_local_path.name} to ASR server for transcription...")
-        try:
-            async with httpx.AsyncClient(timeout=300.0) as client: # Increased timeout for large files
-                with open(video_local_path, "rb") as f:
-                    # The ASR server expects 'file' parameter in multipart/form-data
-                    # The filename part of the tuple should ideally be the original filename
-                    files = {'file': (video_local_path.name, f, 'audio/mpeg')} 
-                    response = await client.post(ASR_SERVER_URL, files=files)
-                response.raise_for_status() # Raise an exception for HTTP errors
-                
-                result = response.json()
-                transcription = result.get("transcribed_text", "")
-                if transcription:
-                    self.recorder.log("info", f"ASR successful for {video_local_path.name}: {transcription[:50]}...")
-                else:
-                    self.recorder.log("warning", f"ASR returned empty transcription for {video_local_path.name}.")
-                return transcription
-        except httpx.RequestError as exc:
-            self.recorder.log("error", f"ASR request error for {video_local_path.name}: {exc}")
-        except httpx.HTTPStatusError as exc:
-            self.recorder.log("error", f"ASR HTTP error for {video_local_path.name} - {exc.response.status_code}: {exc.response.text}")
-        except Exception as e:
-            self.recorder.log("error", f"Unexpected error during ASR for {video_local_path.name}: {e}")
-        return ""
-
 # Example usage (for testing purposes)
 async def main():
     # This requires a running Chrome instance with remote debugging on port 9222
