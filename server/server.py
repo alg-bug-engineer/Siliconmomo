@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -81,8 +81,8 @@ async def get_info():
 @app.post("/transcribe")
 async def transcribe_audio(
     file: UploadFile = File(...),
-    language: Optional[str] = None,
-    task: str = "transcribe"
+    language: Optional[str] = Form(None),
+    task: str = Form("transcribe")
 ):
     """
     Transcribe audio/video file.

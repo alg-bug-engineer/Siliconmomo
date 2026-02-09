@@ -1,11 +1,21 @@
 import os
 from pathlib import Path
 
+# Load .env file if exists (for local development without export)
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"\''))
+
 # Base paths
 BASE_DIR = Path(__file__).parent
 WHISPER_CPP_PATH = os.getenv(
     "WHISPER_CPP_PATH",
-    str(BASE_DIR / "whisper.cpp" / "main")
+    str(BASE_DIR / "whisper.cpp" / "build" / "bin" / "whisper-cli")
 )
 MODEL_PATH = os.getenv(
     "MODEL_PATH",

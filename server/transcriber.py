@@ -19,7 +19,7 @@ class WhisperTranscriber:
         Initialize transcriber and validate paths.
 
         Args:
-            whisper_cpp_path: Path to whisper.cpp main executable
+            whisper_cpp_path: Path to whisper-cli executable
             model_path: Path to ggml model file
 
         Raises:
@@ -66,19 +66,22 @@ class WhisperTranscriber:
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         # Build whisper.cpp command
+        # Note: whisper-cli outputs to stdout by default, don't use --output-txt
         cmd = [
             str(self.whisper_cpp_path),
             "-m", str(self.model_path),
             "-f", audio_path,
-            "--output-txt",  # Output plain text
             "--no-timestamps",  # Don't output timestamps for cleaner text
+            "-np",  # No prints (only results)
         ]
 
         if language:
             cmd.extend(["-l", language])
-
+        
+        # IMPORTANT: Only add --translate when explicitly requested
+        # Otherwise Chinese audio with -l zh should output Chinese, not English
         if task == "translate":
-            cmd.append("--translate")
+            cmd.append("-tr")  # Use short form --translate
 
         logger.info(f"Running whisper.cpp: {' '.join(cmd)}")
 
@@ -134,15 +137,14 @@ class WhisperTranscriber:
         Returns:
             Extracted text
         """
-        # whisper.cpp outputs format: [LANGUAGE] transcribed text
-        # Remove language tag and clean up
+        # With -np (no prints) flag, whisper-cli outputs clean text to stdout
         lines = output.split('\n')
         text_lines = []
 
         for line in lines:
-            # Skip empty lines and progress indicators
             line = line.strip()
-            if not line or line.startswith('['):
+            # Skip empty lines, progress bars, and whisper.cpp status messages
+            if not line or line.startswith('[') or 'whisper_' in line:
                 continue
             text_lines.append(line)
 

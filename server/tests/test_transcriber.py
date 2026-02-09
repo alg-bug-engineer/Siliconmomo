@@ -7,12 +7,12 @@ def test_transcriber_initialization():
     # Should raise if whisper.cpp doesn't exist
     with pytest.raises(FileNotFoundError):
         WhisperTranscriber(
-            whisper_cpp_path="/nonexistent/main",
+            whisper_cpp_path="/nonexistent/whisper-cli",
             model_path="/nonexistent/model.bin"
         )
 
 @pytest.mark.skipif(
-    not Path("whisper.cpp/main").exists(),
+    not Path("whisper.cpp/build/bin/whisper-cli").exists(),
     reason="whisper.cpp not installed"
 )
 def test_transcribe_audio():
