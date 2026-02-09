@@ -252,12 +252,21 @@ class ResearchAgent:
                 self.recorder.log("debug", f"📊 [ASR] 响应键: {list(result.keys())}")
                 self.recorder.log("debug", f"📊 [ASR] 完整响应: {result}")
 
-                transcription = result.get("transcribed_text", "")
+                # 兼容两种可能的响应格式：transcribed_text 或 text
+                transcription = result.get("transcribed_text") or result.get("text", "")
+                language = result.get("language", "unknown")
+                duration = result.get("duration", 0)
+                processing_time = result.get("processing_time", 0)
+
                 if transcription:
                     preview = transcription[:20] + "..." if len(transcription) > 20 else transcription
-                    self.recorder.log("info", f"✅ [ASR] 转录成功 ({elapsed:.2f}s): 文本长度={len(transcription)} | 前20字=「{preview}」")
+                    self.recorder.log("info", f"✅ [ASR] 转录成功 ({elapsed:.2f}s)")
+                    self.recorder.log("info", f"   文本长度={len(transcription)} | 语言={language} | 音频时长={duration:.1f}s | 服务器处理={processing_time:.1f}s")
+                    self.recorder.log("info", f"   前20字=「{preview}」")
                 else:
-                    self.recorder.log("warning", f"⚠️ [ASR] 返回空文本 ({elapsed:.2f}s) | 完整响应: {result}")
+                    self.recorder.log("warning", f"⚠️ [ASR] 返回空文本 ({elapsed:.2f}s)")
+                    self.recorder.log("warning", f"   语言={language} | 音频时长={duration:.1f}s | 服务器处理={processing_time:.1f}s")
+                    self.recorder.log("warning", f"   完整响应: {result}")
                 return transcription
         except httpx.RequestError as exc:
             elapsed = time.time() - start_time
