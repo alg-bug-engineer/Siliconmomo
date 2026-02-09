@@ -43,6 +43,7 @@ class ResearchAgent:
         self.recorder.log("info", f"📂 [深度研究] 输出目录: {self.output_dir}")
 
         self.video_downloader = VideoDownloader(save_dir=self.output_dir / "videos")
+        self.visited_note_ids = set()  # 新增：已访问帖子ID集合
 
     async def run_deep_research(self, keyword: str = None):
         if not DEEP_RESEARCH_ENABLED:
@@ -372,6 +373,34 @@ class ResearchAgent:
         except Exception as e:
             self.recorder.log("warning", f"日期提取异常: {e}")
             return "[发布日期抓取失败]"
+
+    def _extract_note_id_from_url(self, url: str) -> str:
+        """从 URL 中提取 note ID
+
+        Args:
+            url: 帖子 URL（如 https://www.xiaohongshu.com/explore/690b1814...)
+
+        Returns:
+            note ID（如 690b1814...），提取失败返回空字符串
+        """
+        match = re.search(r'/explore/([a-f0-9]+)', url)
+        return match.group(1) if match else ""
+
+    async def _find_unvisited_note(self, notes):
+        """从笔记列表中找到第一个未访问的笔记
+
+        Args:
+            notes: 帖子元素列表
+
+        Returns:
+            (target_note, note_id) 元组，未找到则返回 (None, None)
+        """
+        for note in notes:
+            href = await note.get_attribute('href')
+            note_id = self._extract_note_id_from_url(href or "")
+            if note_id and note_id not in self.visited_note_ids:
+                return note, note_id
+        return None, None
 
     async def _extract_comments(self):
         """从详情页DOM提取可见评论（一级+二级）"""
