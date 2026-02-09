@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 import json
 import traceback
+import aiohttp
+import io
 
 import httpx
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
@@ -25,6 +27,7 @@ from core.browser_manager import BrowserManager
 from core.llm_client import LLMClient
 from core.human_motion import HumanMotion
 from core.video_downloader import VideoDownloader
+from rapidocr import RapidOCR
 
 class ResearchAgent:
     def __init__(self, browser_manager: BrowserManager, llm_client: LLMClient, recorder):
@@ -44,6 +47,10 @@ class ResearchAgent:
 
         self.video_downloader = VideoDownloader(save_dir=self.output_dir / "videos")
         self.visited_note_ids = set()  # 新增：已访问帖子ID集合
+        self.ocr_engine = None
+        if DEEP_RESEARCH_ENABLED:
+            self.ocr_engine = RapidOCR()
+            self.recorder.log("info", "🧠 OCR 引擎已加载")
 
     async def run_deep_research(self, keyword: str = None):
         if not DEEP_RESEARCH_ENABLED:
@@ -270,6 +277,55 @@ class ResearchAgent:
             self.recorder.log("error", f"Unexpected error during ASR for {video_local_path.name}: {e}")
         return ""
 
+    async def _download_image(self, url: str) -> bytes | None:
+        """从URL异步下载图片"""
+        if not url:
+            return None
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=30) as response:
+                    response.raise_for_status()
+                    return await response.read()
+        except aiohttp.ClientError as e:
+            self.recorder.log("warning", f"图片下载失败 {url}: {e}")
+            return None
+        except asyncio.TimeoutError:
+            self.recorder.log("warning", f"图片下载超时 {url}")
+            return None
+
+    async def _perform_ocr_on_bytes(self, image_bytes: bytes) -> list[str]:
+        """对图片字节数据执行 OCR"""
+        if not self.ocr_engine or not image_bytes:
+            return []
+        
+        try:
+            # RapidOCR expects a file path or a numpy array.
+            # We can convert bytes to a file-like object in memory.
+            # A more direct approach might be to save to a temp file and pass the path,
+            # but given the prompt, let's try to keep it in memory if possible.
+            # RapidOCR also accepts PIL Image.
+            from PIL import Image
+            img = Image.open(io.BytesIO(image_bytes))
+            
+            # The demo showed engine("filepath.webp") which returns result.txts
+            # If we pass PIL Image, it might return a different structure.
+            # Let's assume it still returns a structure from which txts can be extracted.
+            ocr_results = await asyncio.to_thread(self.ocr_engine, img)
+            
+            if ocr_results and hasattr(ocr_results, 'txts'):
+                return ocr_results.txts
+            elif isinstance(ocr_results, list) and all(isinstance(item, tuple) for item in ocr_results):
+                # RapidOCR's default output when directly calling engine(image) is often
+                # a list of tuples: (bbox, text, score)
+                return [item[1] for item in ocr_results]
+            else:
+                self.recorder.log("warning", f"OCR 结果格式未知: {ocr_results}")
+                return []
+
+        except Exception as e:
+            self.recorder.log("error", f"OCR 执行异常: {e}")
+            return []
+
     async def _extract_content_from_page(self):
         """提取帖子完整内容：标题、正文、图片、视频、评论"""
         detail = {
@@ -278,7 +334,7 @@ class ResearchAgent:
             "publish_date": "",  # 新增：发布日期
             "image_urls": [], "video_url": "", "video_local_path": "", "media_type": "image",
             "comments": [],
-            "ocr_results": {},  # Placeholder for OCR
+            "ocr_results": [],  # Placeholder for OCR, changed to list
             "asr_results": ""   # Placeholder for ASR
         }
         try:
@@ -303,10 +359,23 @@ class ResearchAgent:
             if detail["video_local_path"] and os.path.exists(detail["video_local_path"]):
                 detail["asr_results"] = await self._transcribe_video(Path(detail["video_local_path"]))
 
-            # OCR Placeholder
-            if detail["image_urls"]:
-                self.recorder.log("debug", "OCR 功能待开发，当前跳过")
-                detail["ocr_results"] = {"status": "skipped", "reason": "OCR service not integrated yet"}
+            # OCR 处理图片
+            if detail["image_urls"] and self.ocr_engine:
+                all_ocr_texts = []
+                self.recorder.log("info", f"✨ [OCR] 开始处理 {len(detail['image_urls'])} 张图片...")
+                for img_url in detail["image_urls"]:
+                    image_bytes = await self._download_image(img_url)
+                    if image_bytes:
+                        ocr_texts = await self._perform_ocr_on_bytes(image_bytes)
+                        if ocr_texts:
+                            all_ocr_texts.extend(ocr_texts)
+                            self.recorder.log("debug", f"📸 [OCR] 从图片 '{img_url[:50]}...' 提取文本: {ocr_texts[:3]}...")
+                if all_ocr_texts:
+                    detail["ocr_results"] = all_ocr_texts
+                    self.recorder.log("info", f"✅ [OCR] 从 {len(detail['image_urls'])} 张图片中提取到 {len(all_ocr_texts)} 条OCR文本。")
+                else:
+                    self.recorder.log("info", f"ℹ️ [OCR] 未能从图片中提取到文本。")
+
 
             # 1. 滚动加载更多一级评论 (最多 DEEP_RESEARCH_COMMENT_LIMIT)
             for _ in range(3): # Scroll a few times to get initial comments
@@ -688,6 +757,11 @@ class ResearchAgent:
             if asr_text:
                 prompt_parts.append(f"**视频转录内容**：\n```\n{asr_text}\n```\n\n")
 
+            # OCR 结果（如果有）
+            ocr_texts = post.get('ocr_results', [])
+            if ocr_texts:
+                prompt_parts.append(f"**图片OCR识别文本**：\n```\n{' '.join(ocr_texts)}\n```\n\n")
+
             # 图片信息
             images = post.get('image_urls', [])
             if images:
@@ -723,28 +797,32 @@ class ResearchAgent:
 
         # 最后的指令
         prompt_parts.append("\n## ⚠️ 重要提醒\n\n")
-        prompt_parts.append("1. **所有结论必须有数据支撑**：不能凭空推测，必须基于上述帖子内容\n")
-        prompt_parts.append("2. **必须引用来源**：每个观点都要标注来源帖子编号（例如：[1][3][5]）\n")
-        prompt_parts.append("3. **量化表达**：用百分比、具体数字描述趋势（例如：\"20篇中有15篇提到...，占75%\"）\n")
-        prompt_parts.append("4. **客观中立**：呈现多元观点，不偏袒某一立场\n")
-        prompt_parts.append("5. **解决问题**：最终目标是帮助用户快速做出决策或获得答案\n")
-        prompt_parts.append("6. **学术严谨**：以研究者的态度，进行深度分析和论证\n\n")
+        prompt_parts.append("1. **所有结论必须有数据支撑**：不能凭空推测，必须基于上述帖子内容。\n")
+        prompt_parts.append("2. **严谨引用来源与深度分析**：\n")
+        prompt_parts.append("   - 每个重要观点或数据点都必须清晰地引用其来源帖子编号（例如：**在分析XXX现象时，根据帖子[1]和[3]的反馈指出...**）。\n")
+        prompt_parts.append("   - 引用时，应将来源融入句中，作为论证的一部分，而非简单地罗列编号。\n")
+        prompt_parts.append("   - 确保每个引用的帖子内容都得到充分的解读和分析，形成有理有据的段落陈述，而不仅仅是数据展示。\n")
+        prompt_parts.append("3. **量化表达**：用百分比、具体数字描述趋势（例如：\"在 {len(research_data)} 篇帖子中，有 X 篇提到...，占比 Y%\"）。\n")
+        prompt_parts.append("4. **客观中立**：呈现多元观点，不偏袒某一立场。\n")
+        prompt_parts.append("5. **解决问题**：最终目标是帮助用户快速做出决策或获得答案。\n")
+        prompt_parts.append("6. **学术严谨**：以研究者的态度，进行深度分析和论证，提供深刻洞察。\n\n")
 
         prompt_parts.append("## 📝 报告格式要求\n\n")
         prompt_parts.append("报告必须包含以下部分：\n\n")
         prompt_parts.append("1. **摘要**：200字以内的核心结论\n")
         prompt_parts.append("2. **问题背景**：用户为什么搜索这个话题\n")
         prompt_parts.append("3. **数据统计**：量化分析（表格形式）\n")
-        prompt_parts.append("4. **详细分析**：多维度深度解读\n")
-        prompt_parts.append("5. **结论与建议**：可操作的决策指南\n")
-        prompt_parts.append("6. **参考文献**：列出所有引用的帖子（学术论文格式）\n\n")
+        prompt_parts.append("4. **详细分析**：多维度深度解读，每个分析点都需有清晰的数据支撑和引用。\n")
+        prompt_parts.append("5. **评论洞察**：从评论区提炼真实用户体验、高频提问、未被解答的疑虑。\n")
+        prompt_parts.append("6. **结论与建议**：基于数据提供可操作的决策指南，并针对常见误区和争议点给出明确建议。\n")
+        prompt_parts.append(f"7. **参考文献**：必须列出所有 {len(research_data)} 篇原始帖子的完整信息，编号从1到 {len(research_data)}，格式如下示例：\n\n")
 
         prompt_parts.append("### 参考文献格式示例：\n")
         prompt_parts.append("```\n")
         prompt_parts.append("## 参考文献\n\n")
-        prompt_parts.append("[1] 小红书用户. 帖子标题. 小红书, 发布日期. [URL]\n")
-        prompt_parts.append("[2] 小红书用户. 帖子标题. 小红书, 发布日期. [URL]\n")
-        prompt_parts.append("...\n")
+        prompt_parts.append("[1] 作者名 (如果可用). 帖子标题. 小红书, 发布日期 (如果可用). [原始URL]\n")
+        prompt_parts.append("[2] 作者名 (如果可用). 帖子标题. 小红书, 发布日期 (如果可用). [原始URL]\n")
+        prompt_parts.append(f"... (共 {len(research_data)} 条)\n")
         prompt_parts.append("```\n\n")
 
         prompt_parts.append("请现在开始生成报告，使用 Markdown 格式输出。\n")

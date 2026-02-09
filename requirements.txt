@@ -2,3 +2,4 @@ playwright
 zai
 httpx
 tenacity
+rapidocr_onnxruntime
