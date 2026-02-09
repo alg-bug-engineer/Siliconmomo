@@ -23,6 +23,7 @@ DATA_DIR.mkdir(exist_ok=True)
 # 获取地址：https://open.bigmodel.cn/
 ZHIPU_AI_KEY = "your-zhipu-ai-key-here"  # 替换为你的真实 Key
 LLM_MODEL = "glm-4.6"         # 文本分析与评论生成
+ASR_SERVER_URL = "http://localhost:8000/transcribe" # 音频转录服务地址
 
 # === 🎯 目标领域与搜索 ===
 # AI 杂货店定位：专注于 AI 工具/插件推荐
@@ -48,6 +49,14 @@ PUBLISH_HOURS = [8, 12, 21]
 DAILY_PUBLISH_LIMIT = 3
 # 触发创作的素材阈值（积累多少条高质量素材后创作一篇）
 INSPIRATION_THRESHOLD = 3  # 改为3个高质量素材触发创作
+
+# === 深度研究配置 ===
+DEEP_RESEARCH_ENABLED = False # 是否启用深度研究模式
+DEEP_RESEARCH_POST_LIMIT = 20 # 深度研究模式下阅读的帖子数量
+DEEP_RESEARCH_LLM_MODEL = "kimi" # 深度研究使用的LLM模型 (例如: kimi, gpt-4)
+DEEP_RESEARCH_COMMENT_LIMIT = 100 # 每个帖子下载的评论数量上限
+DEEP_RESEARCH_OUTPUT_DIR = DATA_DIR / "deep_research_reports" # 深度研究报告输出目录
+DEEP_RESEARCH_OUTPUT_DIR.mkdir(exist_ok=True) # 确保目录存在
 
 # === 🎲 拟人化概率漏斗 ===
 # 第一层：动脑概率 (是否调用 LLM 进行深度分析)

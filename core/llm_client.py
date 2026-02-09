@@ -195,44 +195,26 @@ class LLMClient:
                 "product_id": product.get("id")
             }
 
-    def match_post_to_product(self, title: str, content: str, products: list) -> dict:
-        """
-        分析帖子内容，匹配合适的产品
-        :param title: 帖子标题
-        :param content: 帖子内容
-        :param products: 产品列表
-        :return: 匹配的产品或 None
-        """
-        if not products:
-            return None
-
-        combined_text = f"{title} {content}".lower()
-
-        # 计算每个产品的匹配分数
-        scored_products = []
-        for product in products:
-            score = 0
-            keywords = product.get("keywords", [])
-
-            # 关键词匹配
-            matched_keywords = []
-            for keyword in keywords:
-                if keyword.lower() in combined_text:
-                    score += 1
-                    matched_keywords.append(keyword)
-
-            if score > 0:
-                scored_products.append({
-                    "product": product,
-                    "score": score,
-                    "matched_keywords": matched_keywords
-                })
-
-        # 返回分数最高的产品
-        if scored_products:
-            scored_products.sort(key=lambda x: x["score"], reverse=True)
-            best = scored_products[0]
-            self.recorder.log("info", f"🧠 [产品匹配] 匹配成功: {best['product'].get('name')} (分数: {best['score']})")
-            return best["product"]
-
         return None
+
+    async def generate_text(self, prompt: str, model: str = LLM_MODEL) -> str:
+        """
+        生成通用文本响应。
+        :param prompt: 文本生成提示词。
+        :param model: 使用的 LLM 模型名称。
+        :return: 生成的文本内容。
+        """
+        messages = [
+            {"role": "user", "content": prompt}
+        ]
+        try:
+            # ZhipuAiClient 使用同步调用，不需要 await
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.7,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            self.recorder.log("error", f"🧠 [LLM文本生成] 调用 LLM 失败 (模型: {model}): {e}")
+            return f"Error: LLM failed to generate text for model {model}."

@@ -242,7 +242,8 @@ class ResearchAgent:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 with open(video_local_path, "rb") as f:
                     files = {'file': (video_local_path.name, f, 'audio/mpeg')}
-                    response = await client.post(ASR_SERVER_URL, files=files)
+                    data = {'language': 'zh'}  # 显式指定中文，避免whisper.cpp使用默认的英文
+                    response = await client.post(ASR_SERVER_URL, files=files, data=data)
                 response.raise_for_status()
 
                 elapsed = time.time() - start_time

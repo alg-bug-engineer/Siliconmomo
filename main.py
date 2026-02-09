@@ -5,6 +5,7 @@ from core.human_motion import HumanMotion
 from actions.interaction import ActionExecutor
 from core.recorder import SessionRecorder
 from core.supervisor import Supervisor # 导入车间主任
+from core.llm_client import LLMClient # 导入LLMClient
 
 async def main():
     recorder = SessionRecorder()
@@ -19,11 +20,13 @@ async def main():
         
         # 初始化各个角色
         human = HumanMotion(bm.page)
+        # 初始化LLM客户端
+        llm_client = LLMClient(recorder)
         # Worker 只负责干活，不再负责 try-catch
-        worker = ActionExecutor(bm.page, human, recorder)
+        worker = ActionExecutor(bm.page, human, recorder, llm_client) # worker也需要llm_client
         
         # Supervisor 负责统筹
-        director = Supervisor(bm, human, worker, recorder, max_duration=RUN_DURATION)
+        director = Supervisor(bm, human, worker, recorder, llm_client, max_duration=RUN_DURATION)
         
         # 启动！
         await director.start_shift()

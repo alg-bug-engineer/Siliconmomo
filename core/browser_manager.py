@@ -1,5 +1,6 @@
 from playwright.async_api import async_playwright
 from config.settings import CDP_URL, BASE_URL
+import httpx
 
 class BrowserManager:
     def __init__(self):
@@ -12,10 +13,17 @@ class BrowserManager:
         """连接到已运行的 Chrome 实例"""
         print(f"[Init] 正在连接 Chrome CDP ({CDP_URL})...")
         self.playwright = await async_playwright().start()
-        
+
         try:
-            # 关键修改：连接而非启动
-            self.browser = await self.playwright.chromium.connect_over_cdp(CDP_URL)
+            # 获取 WebSocket 端点（Playwright 新版本需要完整的 WS URL）
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{CDP_URL}/json/version")
+                data = response.json()
+                ws_endpoint = data['webSocketDebuggerUrl']
+                print(f"[Init] WebSocket 端点: {ws_endpoint}")
+
+            # 使用 WebSocket 端点连接
+            self.browser = await self.playwright.chromium.connect_over_cdp(ws_endpoint)
         except Exception as e:
             print(f"❌ 连接失败: {e}")
             print("请检查：终端是否运行了 '/Applications/Google\\ Chrome.app/... --remote-debugging-port=9222'")

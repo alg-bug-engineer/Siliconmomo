@@ -13,14 +13,16 @@ from core.smart_interact import SmartInteractAgent
 from core.analytics import ContentAnalytics
 from core.viral_analyzer import ViralAnalyzer
 from core.trend_tracker import TrendTracker
-from config.settings import BASE_URL, PUBLISH_HOURS, INSPIRATION_THRESHOLD, ENABLE_PHASE2_ANALYTICS, ANALYSIS_INTERVAL, ENABLE_PHASE4_TRENDS
+from core.researcher import ResearchAgent # Import ResearchAgent
+from config.settings import BASE_URL, PUBLISH_HOURS, INSPIRATION_THRESHOLD, ENABLE_PHASE2_ANALYTICS, ANALYSIS_INTERVAL, ENABLE_PHASE4_TRENDS, DEEP_RESEARCH_ENABLED
 
 class Supervisor:
-    def __init__(self, browser_manager, human, executor, recorder, max_duration=3600):
+    def __init__(self, browser_manager, human, executor, recorder, llm_client, max_duration=3600):
         self.bm = browser_manager
         self.human = human
         self.executor = executor
         self.recorder = recorder
+        self.llm_client = llm_client # Assign llm_client
         # 实例化维修工
         self.recovery = RecoveryAgent(browser_manager.page, recorder)
         self.max_duration = max_duration
@@ -34,6 +36,9 @@ class Supervisor:
         self.writer = WriterAgent(recorder, self.product_manager)
         self.artist = ArtistAgent(browser_manager.page, recorder)
         self.publisher = PublisherAgent(browser_manager.page, recorder)
+
+        # 初始化研究相关Agent
+        self.researcher = ResearchAgent(browser_manager, llm_client, recorder)
 
         # === Phase 2: 数据分析和爆款拆解 ===
         if ENABLE_PHASE2_ANALYTICS:
@@ -345,3 +350,19 @@ class Supervisor:
         if self.trend_tracker:
             return self.trend_tracker.get_trending_topics(limit)
         return []
+
+    async def start_deep_research_workflow(self, keyword: str):
+        """
+        启动深度研究工作流
+        :param keyword: 研究的关键词
+        """
+        if not DEEP_RESEARCH_ENABLED:
+            self.recorder.log("warning", "深度研究模式未启用，请在 config/settings.py 中开启。")
+            return
+
+        self.recorder.log("info", f"🔬 [深度研究] 开始深度研究工作流，关键词: {keyword}")
+        try:
+            await self.researcher.run_deep_research(keyword)
+            self.recorder.log("success", f"🔬 [深度研究] 深度研究工作流完成，关键词: {keyword}")
+        except Exception as e:
+            self.recorder.log("error", f"🔬 [深度研究] 深度研究工作流失败: {e}")

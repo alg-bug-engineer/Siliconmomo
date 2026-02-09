@@ -11,12 +11,12 @@ from core.llm_client import LLMClient
 from core.video_downloader import VideoDownloader
 
 class ActionExecutor:
-    def __init__(self, page, human, recorder):
+    def __init__(self, page, human, recorder, llm_client):
         self.page = page
         self.human = human
         self.recorder = recorder
         self.kb = KnowledgeBase(recorder) # <--- 初始化知识库
-        self.llm = LLMClient(recorder)
+        self.llm = llm_client # Use the passed llm_client instance
 
         self.posts_processed_count = 0
         self.current_keyword_index = 0
