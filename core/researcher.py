@@ -627,6 +627,7 @@ class ResearchAgent:
             prompt_parts.append(f"### 📄 帖子 {i}\n\n")
             prompt_parts.append(f"- **URL**: {post.get('url', 'N/A')}\n")
             prompt_parts.append(f"- **标题**: {post.get('title', '(无标题)')}\n")
+            prompt_parts.append(f"- **发布时间**: {post.get('publish_date', '[发布日期抓取失败]')}\n")  # 新增
             prompt_parts.append(f"- **类型**: {post.get('media_type', 'image')}\n\n")
 
             # 正文内容
@@ -693,8 +694,8 @@ class ResearchAgent:
         prompt_parts.append("### 参考文献格式示例：\n")
         prompt_parts.append("```\n")
         prompt_parts.append("## 参考文献\n\n")
-        prompt_parts.append("[1] 小红书用户. 帖子标题. 小红书, 发布日期. [URL]\n")
-        prompt_parts.append("[2] 小红书用户. 帖子标题. 小红书, 发布日期. [URL]\n")
+        prompt_parts.append("[1] 小红书用户. 帖子标题. 小红书, 昨天 14:53 福建. [URL]\n")
+        prompt_parts.append("[2] 小红书用户. 帖子标题. 小红书, 2026-02-08 10:20 北京. [URL]\n")
         prompt_parts.append("...\n")
         prompt_parts.append("```\n\n")
 
