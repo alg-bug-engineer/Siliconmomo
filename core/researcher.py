@@ -415,7 +415,9 @@ class ResearchAgent:
             (target_note, note_id) 元组，未找到则返回 (None, None)
         """
         for note in notes:
-            href = await note.get_attribute('href')
+            # note-item 元素本身没有 href，需要从子元素 a 标签中获取
+            link = note.locator('a').first
+            href = await link.get_attribute('href') if await link.count() > 0 else None
             note_id = self._extract_note_id_from_url(href or "")
             if note_id and note_id not in self.visited_note_ids:
                 return note, note_id
