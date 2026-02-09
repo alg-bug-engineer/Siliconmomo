@@ -60,6 +60,7 @@ class ResearchAgent:
         # 模拟真实用户浏览行为：逐个点击帖子
         research_data = []
         posts_processed = 0
+        attempts = 0  # 尝试次数计数器
 
         while posts_processed < DEEP_RESEARCH_POST_LIMIT:
             # 1. 检查环境
@@ -78,35 +79,81 @@ class ResearchAgent:
                     self.recorder.log("error", "❌ [深度研究] 未检测到笔记，结束研究")
                     break
 
-            # 3. 选择一个帖子并点击（研究模式：加速浏览）
+            # 3. 防御性检查：确保没有遮罩层存在（避免上次关闭失败）
+            try:
+                mask_visible = await self.page.locator(SELECTORS["note_detail_mask"]).is_visible()
+                if mask_visible:
+                    self.recorder.log("warning", "⚠️ 检测到残留遮罩层，强制关闭...")
+                    await self.page.keyboard.press("Escape")
+                    await self.page.wait_for_selector(
+                        SELECTORS["note_detail_mask"],
+                        state="hidden",
+                        timeout=3000
+                    )
+                    await asyncio.sleep(0.5)
+            except Exception as e:
+                self.recorder.log("debug", f"遮罩层检查: {e}")
+
+            # 4. 选择一个帖子并点击（研究模式：加速浏览）
             target_note = random.choice(notes[:6])  # 从前6个中随机选择
             await target_note.scroll_into_view_if_needed()
             await asyncio.sleep(random.uniform(0.3, 0.5))  # 减半延迟
 
-            # 提前获取 note_id 用于日志
-            note_href = await target_note.get_attribute('href') or ""
-            note_id_preview = self._extract_note_id_from_url(note_href)[:8] if note_href else "unknown"
-            
-            self.recorder.log("info", f"👆 [深度研究] 点击帖子 {posts_processed + 1}/{DEEP_RESEARCH_POST_LIMIT} (ID: {note_id_preview}...)")
+            # 提前获取 note_id 用于日志（从子元素 <a> 标签获取 href）
+            note_id_preview = "unknown"
+            try:
+                # 正确获取：先定位所有 <a> 标签，然后取第一个的 href
+                note_links = target_note.locator('a[href*="/explore/"]')
+                if await note_links.count() > 0:
+                    note_href = await note_links.first.get_attribute('href') or ""
+                    if note_href:
+                        note_id_preview = self._extract_note_id_from_url(note_href)[:8] or "unknown"
+            except Exception as e:
+                self.recorder.log("debug", f"获取 note_id 失败: {e}")
+
+            attempts += 1
+            self.recorder.log("info", f"👆 [深度研究] 点击第 {attempts} 个帖子 | 已收集: {posts_processed}/{DEEP_RESEARCH_POST_LIMIT} (ID: {note_id_preview}...)")
             await target_note.click()
 
-            # 4. 等待详情页加载
+            # 5. 等待详情页加载，并尝试从URL获取ID
             try:
                 await self.page.wait_for_selector(SELECTORS["note_detail_mask"], timeout=5000)
+                # 如果之前没获取到ID，尝试从当前页面URL获取
+                if note_id_preview == "unknown":
+                    current_url = self.page.url
+                    note_id_from_url = self._extract_note_id_from_url(current_url)
+                    if note_id_from_url:
+                        note_id_preview = note_id_from_url[:8]
             except:
                 self.recorder.log("warning", "⏱️ [深度研究] 详情页加载超时，跳过此帖")
                 await self.page.keyboard.press("Escape")
                 continue
 
-            # 5. 提取帖子内容（不调用 LLM，仅提取数据）
+            # 6. 提取帖子内容（不调用 LLM，仅提取数据）
             post_data = await self._extract_content_from_page()
-            if post_data and post_data.get("content"):
+
+            # 判断帖子是否有价值：文字、图片、视频、评论任一存在即可收集
+            # 纯图片帖子、有评论的帖子都是有价值的内容！
+            has_value = False
+            if post_data:
+                has_value = bool(
+                    post_data.get("content") or          # 有文字内容
+                    post_data.get("image_urls") or       # 有图片
+                    post_data.get("video_url") or        # 有视频
+                    post_data.get("comments")            # 有评论
+                )
+
+            if has_value:
                 research_data.append(post_data)
                 posts_processed += 1
                 note_id = self._extract_note_id_from_url(post_data.get('url', ''))
                 self.recorder.log("info", f"✅ [深度研究] 已收集 {posts_processed}/{DEEP_RESEARCH_POST_LIMIT} 个帖子 (ID: {note_id[:8] if note_id else 'unknown'}...)")
+            else:
+                # 记录跳过原因
+                skip_reason = "无数据" if not post_data else "完全无内容（无文字、图片、视频、评论）"
+                self.recorder.log("warning", f"⚠️ [深度研究] 跳过帖子: {skip_reason} (尝试 {attempts})")
 
-            # 6. 关闭详情页，返回搜索结果页（研究模式：快速关闭）
+            # 7. 关闭详情页，返回搜索结果页（研究模式：快速关闭）
             await asyncio.sleep(random.uniform(0.5, 0.8))  # 减半延迟
             if await self.human.click_element(SELECTORS["btn_close"], "关闭详情"):
                 self.recorder.log("debug", "使用按钮关闭详情页")
@@ -114,10 +161,20 @@ class ResearchAgent:
                 await self.page.keyboard.press("Escape")
                 self.recorder.log("debug", "使用 Escape 关闭详情页")
 
-            # 7. 等待返回搜索结果页（研究模式：快速切换）
-            await asyncio.sleep(random.uniform(0.5, 1.0))  # 减半延迟
+            # 8. 等待遮罩层完全消失，避免拦截下一次点击
+            try:
+                await self.page.wait_for_selector(
+                    SELECTORS["note_detail_mask"],
+                    state="hidden",
+                    timeout=5000
+                )
+                self.recorder.log("debug", "✅ 遮罩层已消失")
+            except Exception as e:
+                self.recorder.log("warning", f"⚠️ 等待遮罩层消失超时: {e}")
+                # 如果遮罩层仍然存在，强制等待更长时间
+                await asyncio.sleep(1.0)
 
-            # 8. 如果还需要更多帖子，偶尔滚动页面加载新内容
+            # 9. 如果还需要更多帖子，偶尔滚动页面加载新内容
             if posts_processed < DEEP_RESEARCH_POST_LIMIT and posts_processed % 3 == 0:
                 self.recorder.log("info", "📜 [深度研究] 滚动加载更多帖子...")
                 await self.human.human_scroll(random.randint(800, 1200))
