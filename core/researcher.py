@@ -402,6 +402,34 @@ class ResearchAgent:
                 return note, note_id
         return None, None
 
+    async def _recover_from_environment_drift(self, search_term: str) -> bool:
+        """环境偏离后的恢复逻辑
+
+        当检测到不在 search_result 页面时，导航回主页并重新搜索
+
+        Args:
+            search_term: 搜索关键词
+
+        Returns:
+            True 表示恢复成功，False 表示恢复失败
+        """
+        try:
+            self.recorder.log("warning", f"⚠️ [环境偏离] 当前URL: {self.page.url}")
+            self.recorder.log("info", "🔄 [恢复] 导航回主页并重新搜索...")
+
+            # 导航回主页
+            await self.page.goto("https://www.xiaohongshu.com/explore")
+            await asyncio.sleep(2)
+
+            # 重新执行搜索
+            await self._perform_search(search_term)
+
+            self.recorder.log("info", "✅ [恢复] 环境恢复成功")
+            return True
+        except Exception as e:
+            self.recorder.log("error", f"❌ [恢复] 环境恢复失败: {e}")
+            return False
+
     async def _extract_comments(self):
         """从详情页DOM提取可见评论（一级+二级）"""
         try:
