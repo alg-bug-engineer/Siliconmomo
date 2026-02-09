@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 import json
 import traceback
+import time
 
 import httpx
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
@@ -102,31 +103,43 @@ class ResearchAgent:
             await target_note.scroll_into_view_if_needed()
             await asyncio.sleep(random.uniform(0.3, 0.5))
 
+            # 点击帖子
+            click_start = time.time()
             self.recorder.log("info", f"👆 [深度研究] 点击帖子 {posts_processed + 1}/{DEEP_RESEARCH_POST_LIMIT} (ID: {note_id[:8]}...)")
             await target_note.click()
 
             # 4. 等待详情页加载
+            load_start = time.time()
             try:
                 await self.page.wait_for_selector(SELECTORS["note_detail_mask"], timeout=5000)
+                load_time = time.time() - load_start
+                self.recorder.log("debug", f"⏱️ [耗时] 详情页加载: {load_time:.2f}s")
             except:
-                self.recorder.log("warning", "⏱️ [深度研究] 详情页加载超时，跳过此帖")
+                load_time = time.time() - load_start
+                self.recorder.log("warning", f"⏱️ [深度研究] 详情页加载超时 ({load_time:.2f}s)，跳过此帖")
                 await self.page.keyboard.press("Escape")
                 continue
 
             # 5. 提取帖子内容（不调用 LLM，仅提取数据）
+            extract_start = time.time()
             post_data = await self._extract_content_from_page()
+            extract_time = time.time() - extract_start
             if post_data and post_data.get("content"):
                 research_data.append(post_data)
                 posts_processed += 1
-                self.recorder.log("info", f"✅ [深度研究] 已收集 {posts_processed}/{DEEP_RESEARCH_POST_LIMIT} 个帖子")
+                total_click_time = time.time() - click_start
+                self.recorder.log("info", f"✅ [深度研究] 已收集 {posts_processed}/{DEEP_RESEARCH_POST_LIMIT} 个帖子 | 提取耗时: {extract_time:.2f}s | 总耗时: {total_click_time:.2f}s")
 
             # 6. 关闭详情页，返回搜索结果页（研究模式：快速关闭）
+            close_start = time.time()
             await asyncio.sleep(random.uniform(0.5, 0.8))  # 减半延迟
             if await self.human.click_element(SELECTORS["btn_close"], "关闭详情"):
-                self.recorder.log("debug", "使用按钮关闭详情页")
+                close_time = time.time() - close_start
+                self.recorder.log("debug", f"使用按钮关闭详情页 ({close_time:.2f}s)")
             else:
                 await self.page.keyboard.press("Escape")
-                self.recorder.log("debug", "使用 Escape 关闭详情页")
+                close_time = time.time() - close_start
+                self.recorder.log("debug", f"使用 Escape 关闭详情页 ({close_time:.2f}s)")
 
             # 7. 等待返回搜索结果页（研究模式：快速切换）
             await asyncio.sleep(random.uniform(0.5, 1.0))  # 减半延迟
@@ -150,7 +163,12 @@ class ResearchAgent:
                 json.dump(serializable_data, f, ensure_ascii=False, indent=4)
             self.recorder.log("info", f"💾 [深度研究] 原始数据已保存: {data_filename}")
 
+            # 生成报告（LLM调用）
+            report_start = time.time()
             report = await self._generate_report(research_data)
+            report_time = time.time() - report_start
+            self.recorder.log("info", f"⏱️ [耗时] 报告生成: {report_time:.2f}s")
+
             await self._save_report(report, search_term)
         else:
             self.recorder.log("warning", "⚠️ [深度研究] 未收集到数据，跳过报告生成")
@@ -159,25 +177,33 @@ class ResearchAgent:
 
 
     async def _perform_search(self, keyword: str):
+        search_start = time.time()
         self.recorder.log("info", f"🔍 [搜索] 开始搜索关键词: '{keyword}'")
 
         try:
             # 1. 确保在小红书首页
             if "xiaohongshu.com" not in self.page.url or "/search_result" in self.page.url:
+                nav_start = time.time()
                 self.recorder.log("info", "🔍 [搜索] 导航到小红书首页...")
                 await self.page.goto(BASE_URL)
                 await asyncio.sleep(1)
+                nav_time = time.time() - nav_start
+                self.recorder.log("debug", f"⏱️ [耗时] 导航到首页: {nav_time:.2f}s")
 
             # 2. 点击搜索框
             await self.human.click_element(SELECTORS["search_input"], "搜索框")
             await asyncio.sleep(random.uniform(0.5, 1.0))
 
             # 3. 清空并输入关键词
+            type_start = time.time()
             await self.page.locator(SELECTORS["search_input"]).clear()
             for char in keyword:
                 await self.page.keyboard.type(char, delay=random.randint(50, 150))
+            type_time = time.time() - type_start
+            self.recorder.log("debug", f"⏱️ [耗时] 输入关键词: {type_time:.2f}s")
 
             # 4. 提交搜索
+            submit_start = time.time()
             self.recorder.log("info", f"🔍 [搜索] 提交搜索: '{keyword}'")
             await self.page.keyboard.press("Enter")
 
@@ -187,9 +213,13 @@ class ResearchAgent:
             # 6. 额外等待，确保笔记卡片渲染完成
             await asyncio.sleep(3)
 
-            self.recorder.log("info", f"✅ [搜索] 搜索完成，当前URL: {self.page.url}")
+            submit_time = time.time() - submit_start
+            total_time = time.time() - search_start
+            self.recorder.log("info", f"✅ [搜索] 搜索完成 | 加载耗时: {submit_time:.2f}s | 总耗时: {total_time:.2f}s")
+            self.recorder.log("debug", f"当前URL: {self.page.url}")
         except Exception as e:
-            self.recorder.log("error", f"❌ [搜索] 搜索失败 '{keyword}': {e}")
+            total_time = time.time() - search_start
+            self.recorder.log("error", f"❌ [搜索] 搜索失败 '{keyword}' ({total_time:.2f}s): {e}")
             raise
 
 
@@ -203,27 +233,42 @@ class ResearchAgent:
             self.recorder.log("warning", f"Video file not found for transcription: {video_local_path}")
             return ""
 
-        self.recorder.log("info", f"Sending {video_local_path.name} to ASR server for transcription...")
+        # 获取文件大小信息
+        file_size_mb = video_local_path.stat().st_size / (1024 * 1024)
+        self.recorder.log("info", f"📤 [ASR] 发送文件: {video_local_path.name} ({file_size_mb:.2f} MB)")
+
+        start_time = time.time()
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client: # Increased timeout for large files
+            async with httpx.AsyncClient(timeout=300.0) as client:
                 with open(video_local_path, "rb") as f:
-                    files = {'file': (video_local_path.name, f, 'audio/mpeg')} # Assumes mp3, adjust as needed
+                    files = {'file': (video_local_path.name, f, 'audio/mpeg')}
                     response = await client.post(ASR_SERVER_URL, files=files)
-                response.raise_for_status() # Raise an exception for HTTP errors
-                
+                response.raise_for_status()
+
+                elapsed = time.time() - start_time
                 result = response.json()
+
+                # 详细日志：显示响应结构
+                self.recorder.log("debug", f"📊 [ASR] 响应键: {list(result.keys())}")
+                self.recorder.log("debug", f"📊 [ASR] 完整响应: {result}")
+
                 transcription = result.get("transcribed_text", "")
                 if transcription:
-                    self.recorder.log("info", f"ASR successful for {video_local_path.name}: {transcription[:50]}...")
+                    preview = transcription[:20] + "..." if len(transcription) > 20 else transcription
+                    self.recorder.log("info", f"✅ [ASR] 转录成功 ({elapsed:.2f}s): 文本长度={len(transcription)} | 前20字=「{preview}」")
                 else:
-                    self.recorder.log("warning", f"ASR returned empty transcription for {video_local_path.name}.")
+                    self.recorder.log("warning", f"⚠️ [ASR] 返回空文本 ({elapsed:.2f}s) | 完整响应: {result}")
                 return transcription
         except httpx.RequestError as exc:
-            self.recorder.log("error", f"ASR request error for {video_local_path.name}: {exc}")
+            elapsed = time.time() - start_time
+            self.recorder.log("error", f"❌ [ASR] 请求错误 ({elapsed:.2f}s): {exc}")
         except httpx.HTTPStatusError as exc:
-            self.recorder.log("error", f"ASR HTTP error for {video_local_path.name} - {exc.response.status_code}: {exc.response.text}")
+            elapsed = time.time() - start_time
+            self.recorder.log("error", f"❌ [ASR] HTTP错误 ({elapsed:.2f}s) - {exc.response.status_code}: {exc.response.text}")
         except Exception as e:
-            self.recorder.log("error", f"Unexpected error during ASR for {video_local_path.name}: {e}")
+            elapsed = time.time() - start_time
+            self.recorder.log("error", f"❌ [ASR] 未知错误 ({elapsed:.2f}s): {e}")
+            self.recorder.log("debug", f"❌ [ASR] 堆栈: {traceback.format_exc()}")
         return ""
 
     async def _extract_content_from_page(self):
@@ -250,10 +295,14 @@ class ResearchAgent:
             detail["image_urls"] = await self._extract_images()
 
             # 提取并下载视频
+            video_start = time.time()
             video_info = await self._extract_video()
             detail["video_url"] = video_info.get("video_url", "")
             detail["video_local_path"] = video_info.get("local_path", "")
             detail["media_type"] = "video" if detail["video_url"] else "image"
+            if detail["video_url"]:
+                video_time = time.time() - video_start
+                self.recorder.log("debug", f"⏱️ [耗时] 视频下载: {video_time:.2f}s")
 
             # 执行 ASR 转录（如果有视频）
             if detail["video_local_path"] and os.path.exists(detail["video_local_path"]):
@@ -265,6 +314,7 @@ class ResearchAgent:
                 detail["ocr_results"] = {"status": "skipped", "reason": "OCR service not integrated yet"}
 
             # 1. 滚动加载更多一级评论 (最多 DEEP_RESEARCH_COMMENT_LIMIT)
+            comment_start = time.time()
             for _ in range(3): # Scroll a few times to get initial comments
                 await self._scroll_comment_area()
                 await asyncio.sleep(random.uniform(1, 2))
@@ -276,6 +326,8 @@ class ResearchAgent:
             # 3. 提取评论
             all_comments = await self._extract_comments()
             detail["comments"] = all_comments[:DEEP_RESEARCH_COMMENT_LIMIT] # Limit comments
+            comment_time = time.time() - comment_start
+            self.recorder.log("debug", f"⏱️ [耗时] 评论提取: {comment_time:.2f}s (共{len(detail['comments'])}条)")
 
             # 提取帖子ID
             url_match = re.search(r'/explore/([a-f0-9]+)', self.page.url)
@@ -704,41 +756,6 @@ class ResearchAgent:
         prompt_parts.append("请现在开始生成报告，使用 Markdown 格式输出。\n")
 
         return "".join(prompt_parts)
-
-    async def _transcribe_video(self, video_local_path: Path) -> str:
-        """Sends a local video file to the ASR server for transcription."""
-        if not ASR_SERVER_URL:
-            self.recorder.log("warning", "ASR_SERVER_URL is not configured. Skipping video transcription.")
-            return ""
-
-        if not video_local_path.exists():
-            self.recorder.log("warning", f"Video file not found for transcription: {video_local_path}")
-            return ""
-
-        self.recorder.log("info", f"Sending {video_local_path.name} to ASR server for transcription...")
-        try:
-            async with httpx.AsyncClient(timeout=300.0) as client: # Increased timeout for large files
-                with open(video_local_path, "rb") as f:
-                    # The ASR server expects 'file' parameter in multipart/form-data
-                    # The filename part of the tuple should ideally be the original filename
-                    files = {'file': (video_local_path.name, f, 'audio/mpeg')} 
-                    response = await client.post(ASR_SERVER_URL, files=files)
-                response.raise_for_status() # Raise an exception for HTTP errors
-                
-                result = response.json()
-                transcription = result.get("transcribed_text", "")
-                if transcription:
-                    self.recorder.log("info", f"ASR successful for {video_local_path.name}: {transcription[:50]}...")
-                else:
-                    self.recorder.log("warning", f"ASR returned empty transcription for {video_local_path.name}.")
-                return transcription
-        except httpx.RequestError as exc:
-            self.recorder.log("error", f"ASR request error for {video_local_path.name}: {exc}")
-        except httpx.HTTPStatusError as exc:
-            self.recorder.log("error", f"ASR HTTP error for {video_local_path.name} - {exc.response.status_code}: {exc.response.text}")
-        except Exception as e:
-            self.recorder.log("error", f"Unexpected error during ASR for {video_local_path.name}: {e}")
-        return ""
 
 # Example usage (for testing purposes)
 async def main():
