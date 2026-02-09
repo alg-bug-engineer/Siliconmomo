@@ -26,8 +26,7 @@ logs/
 data/inspiration.json
 data/drafts.json
 data/products.json  # 产品库包含商店链接，敏感信息
-data/deep_research_reports/  # 研究报告和视频文件
-
+data/deep_research_reports
 # === 下载的资源 ===
 assets/images/
 

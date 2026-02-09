@@ -83,7 +83,11 @@ class ResearchAgent:
             await target_note.scroll_into_view_if_needed()
             await asyncio.sleep(random.uniform(0.3, 0.5))  # 减半延迟
 
-            self.recorder.log("info", f"👆 [深度研究] 点击帖子 {posts_processed + 1}/{DEEP_RESEARCH_POST_LIMIT}")
+            # 提前获取 note_id 用于日志
+            note_href = await target_note.get_attribute('href') or ""
+            note_id_preview = self._extract_note_id_from_url(note_href)[:8] if note_href else "unknown"
+            
+            self.recorder.log("info", f"👆 [深度研究] 点击帖子 {posts_processed + 1}/{DEEP_RESEARCH_POST_LIMIT} (ID: {note_id_preview}...)")
             await target_note.click()
 
             # 4. 等待详情页加载
@@ -99,7 +103,8 @@ class ResearchAgent:
             if post_data and post_data.get("content"):
                 research_data.append(post_data)
                 posts_processed += 1
-                self.recorder.log("info", f"✅ [深度研究] 已收集 {posts_processed}/{DEEP_RESEARCH_POST_LIMIT} 个帖子")
+                note_id = self._extract_note_id_from_url(post_data.get('url', ''))
+                self.recorder.log("info", f"✅ [深度研究] 已收集 {posts_processed}/{DEEP_RESEARCH_POST_LIMIT} 个帖子 (ID: {note_id[:8] if note_id else 'unknown'}...)")
 
             # 6. 关闭详情页，返回搜索结果页（研究模式：快速关闭）
             await asyncio.sleep(random.uniform(0.5, 0.8))  # 减半延迟
@@ -184,16 +189,17 @@ class ResearchAgent:
             self.recorder.log("warning", f"Video file not found for transcription: {video_local_path}")
             return ""
 
-        self.recorder.log("info", f"Sending {video_local_path.name} to ASR server for transcription...")
+        self.recorder.log("info", f"Sending {video_local_path.name} to ASR server for transcription (language=zh)...")
         try:
             async with httpx.AsyncClient(timeout=300.0) as client: # Increased timeout for large files
                 with open(video_local_path, "rb") as f:
-                    files = {'file': (video_local_path.name, f, 'audio/mpeg')} # Assumes mp3, adjust as needed
-                    response = await client.post(ASR_SERVER_URL, files=files)
+                    files = {'file': (video_local_path.name, f, 'audio/mpeg')}
+                    data = {'language': 'zh', 'task': 'transcribe'}  # 强制使用中文
+                    response = await client.post(ASR_SERVER_URL, files=files, data=data)
                 response.raise_for_status() # Raise an exception for HTTP errors
                 
                 result = response.json()
-                transcription = result.get("transcribed_text", "")
+                transcription = result.get("text", "")
                 if transcription:
                     self.recorder.log("info", f"ASR successful for {video_local_path.name}: {transcription[:50]}...")
                 else:
@@ -259,12 +265,13 @@ class ResearchAgent:
             detail["comments"] = all_comments[:DEEP_RESEARCH_COMMENT_LIMIT] # Limit comments
 
             # 提取帖子ID
-            url_match = re.search(r'/explore/([a-f0-9]+)', self.page.url)
-            note_id = url_match.group(1) if url_match else "unknown"
+            note_id = self._extract_note_id_from_url(self.page.url)
+            note_id_short = note_id[:8] if note_id else "unknown"
 
             media_count = len(detail["image_urls"]) if detail["media_type"] == "image" else 1
+            content_preview = detail['content'][:30].replace('\n', ' ') if detail['content'] else '(无正文)'
             self.recorder.log("info", 
-                f"📸 [抓取] ID:{note_id[:8]}... | {detail['media_type']}x{media_count} | 评论x{len(detail['comments'])}")
+                f"📸 [抓取完成] 帖子 {note_id_short}... | {detail['media_type']}x{media_count} | 评论x{len(detail['comments'])} | 内容: {content_preview}...")
 
         except Exception as e:
             self.recorder.log("warning", f"内容提取异常: {e}")
@@ -326,27 +333,31 @@ class ResearchAgent:
             if not is_video:
                 return {"video_url": "", "local_path": ""}  # 不是视频笔记
 
-            # 步骤2: 获取当前 URL
+            # 步骤2: 获取当前 URL 和 note_id
             current_url = self.page.url
-            self.recorder.log("info", f"📹 [视频下载] 检测到视频笔记，开始提取...")
+            note_id = self._extract_note_id_from_url(current_url)
+            note_id_short = note_id[:8] if note_id else "unknown"
+            self.recorder.log("info", f"📹 [视频下载] 帖子 {note_id_short}... 检测到视频，开始提取...")
 
             # 步骤3: 提取视频信息并下载
             result = await self.video_downloader.extract_and_download(current_url)
 
             if result:
-                self.recorder.log("info", f"✅ [视频下载] 成功")
-                self.recorder.log("info", f"   URL: {result['video_url'][:60]}...")
-                self.recorder.log("info", f"   本地: {result['local_path']}")
+                self.recorder.log("info", f"✅ [视频下载] 帖子 {note_id_short}... 下载成功")
+                self.recorder.log("info", f"   视频URL: {result['video_url'][:50]}...")
+                self.recorder.log("info", f"   保存路径: {result['local_path']}")
                 return {
                     "video_url": result["video_url"],
                     "local_path": result["local_path"],
                 }
             else:
-                self.recorder.log("warning", "⚠️ [视频下载] 提取或下载失败")
+                self.recorder.log("warning", f"⚠️ [视频下载] 帖子 {note_id_short}... 提取或下载失败")
                 return {"video_url": "", "local_path": ""}
 
         except Exception as e:
-            self.recorder.log("error", f"❌ [视频下载] 异常: {e}")
+            note_id = self._extract_note_id_from_url(self.page.url if self.page else "")
+            note_id_short = note_id[:8] if note_id else "unknown"
+            self.recorder.log("error", f"❌ [视频下载] 帖子 {note_id_short}... 异常: {e}")
             return {"video_url": "", "local_path": ""}
 
     async def _extract_publish_date(self) -> str:
