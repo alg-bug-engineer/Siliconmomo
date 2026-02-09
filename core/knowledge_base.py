@@ -1,15 +1,22 @@
 import json
+import re
 import time
 import random
 from datetime import datetime
 from pathlib import Path
-from config.settings import INSPIRATION_FILE, INSPIRATION_THRESHOLD
+from config.settings import INSPIRATION_FILE, INSPIRATION_THRESHOLD, KB_BUFFER_SIZE, KB_FLUSH_INTERVAL
 
 class KnowledgeBase:
     def __init__(self, recorder):
         self.recorder = recorder
         self.file_path = INSPIRATION_FILE
         self._ensure_file()
+
+        # 批量写入缓冲区
+        self._buffer = []
+        self._buffer_max_size = KB_BUFFER_SIZE
+        self._flush_interval = KB_FLUSH_INTERVAL
+        self._last_flush_time = time.time()
 
     def _ensure_file(self):
         """确保 JSON 文件存在且格式正确"""
@@ -33,49 +40,75 @@ class KnowledgeBase:
         with open(self.file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
-    def save_inspiration(self, title, content, analysis_result, source_url="", image_urls=None):
+    def save_inspiration(self, title, content, analysis_result, source_url="",
+                         image_urls=None, video_url="", video_local_path="", media_type="image", comments=None):
         """
-        保存灵感素材
+        保存灵感素材（含图片、视频、评论）
         :param title: 帖子标题
         :param content: 帖子正文
-        :param analysis_result: LLM 的分析结果 (包含是否相关、评论内容等)
-        :param source_url: 帖子链接 (可选)
-        :param image_urls: 帖子配图URL列表 (可选)
+        :param analysis_result: LLM 的分析结果
+        :param source_url: 帖子链接
+        :param image_urls: 配图URL列表
+        :param video_url: 视频CDN链接（视频帖）
+        :param video_local_path: 视频本地路径（已下载）
+        :param media_type: 媒体类型 image/video
+        :param comments: 评论列表 [{user, content, likes, sub_comments}]
         """
         try:
             data = self._load_data()
-            
-            # 查重 (避免重复存储同一个标题)
+
+            # 从URL提取note_id用于精确去重
+            note_id = ""
+            url_match = re.search(r'/explore/([a-f0-9]+)', source_url)
+            if url_match:
+                note_id = url_match.group(1)
+
+            # 查重（优先按note_id，其次按标题）
             for item in data:
-                if item["title"] == title:
+                if (note_id and item.get("note_id") == note_id) or item["title"] == title:
                     self.recorder.log("info", "📚 [知识库] 素材已存在，跳过保存")
                     return
 
-            # 构造新的记录
             new_record = {
                 "id": str(int(time.time())),
+                "note_id": note_id,
                 "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "source_type": "xhs_note",
                 "title": title,
                 "content": content,
                 "url": source_url,
-                "image_urls": image_urls or [],  # 保存配图URL用于风格分析
-                # 存储 LLM 的思考结晶
+                # 媒体信息
+                "media_type": media_type,
+                "image_urls": image_urls or [],
+                "video_url": video_url,
+                "video_local_path": video_local_path,  # 视频本地路径
+                # 评论数据
+                "comments": comments or [],
+                # LLM分析
                 "ai_analysis": {
                     "is_relevant": analysis_result.get("is_relevant"),
-                    "is_high_quality": analysis_result.get("is_high_quality", False),  # 是否高质量素材
+                    "is_high_quality": analysis_result.get("is_high_quality", False),
                     "generated_comment": analysis_result.get("comment_text"),
-                    "style_hint": analysis_result.get("style_hint", "")  # 风格提示
+                    "style_hint": analysis_result.get("style_hint", "")
                 },
-                "tags": [], 
-                "status": "unused"  # unused: 待使用, used: 已转化发帖
+                "tags": [],
+                "status": "unused"
             }
-            
-            data.append(new_record)
-            self._save_data(data)
-            
-            self.recorder.log("info", f"💾 [知识库] +1 新素材: {title[:15]}...")
-            
+
+            # 添加到缓冲区（而非立即写入）
+            self._buffer.append(new_record)
+
+            # 日志：显示抓取到的媒体和评论数量
+            img_count = len(image_urls or [])
+            cmt_count = len(comments or [])
+            media_info = f"视频" if media_type == "video" else f"图片x{img_count}"
+            self.recorder.log("info",
+                f"💾 [知识库-缓存] +1 新素材: {title[:15]}... | {media_info} | 评论x{cmt_count} (缓冲区:{len(self._buffer)})")
+
+            # 检查是否需要刷新到磁盘
+            if self._should_flush():
+                self._flush_to_disk()
+
         except Exception as e:
             self.recorder.log("error", f"📚 [知识库] 保存失败: {e}")
 
@@ -141,6 +174,46 @@ class KnowledgeBase:
         except Exception as e:
             self.recorder.log("error", f"📚 [知识库] 标记失败: {e}")
 
+    def mark_multiple_as_used(self, count=INSPIRATION_THRESHOLD):
+        """
+        批量标记多条高质量素材为已使用
+        创作后调用，避免素材堆积
+        :param count: 标记数量，默认为阈值数量
+        :return: 实际标记的素材ID列表
+        """
+        try:
+            data = self._load_data()
+
+            # 筛选高质量未使用的素材
+            high_quality_unused = [
+                item for item in data
+                if item.get("ai_analysis", {}).get("is_high_quality")
+                and item.get("status") == "unused"
+            ]
+
+            if not high_quality_unused:
+                self.recorder.log("info", "📚 [知识库] 没有可标记的高质量素材")
+                return []
+
+            # 随机选择指定数量
+            to_mark = random.sample(high_quality_unused, min(count, len(high_quality_unused)))
+            marked_ids = []
+
+            for item in to_mark:
+                item["status"] = "used"
+                item["used_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                item["used_in_batch"] = True  # 标记为批量使用
+                marked_ids.append(item.get("id"))
+
+            self._save_data(data)
+            self.recorder.log("info", f"📚 [知识库] 批量标记 {len(marked_ids)} 条素材为已使用")
+
+            return marked_ids
+
+        except Exception as e:
+            self.recorder.log("error", f"📚 [知识库] 批量标记失败: {e}")
+            return []
+
     def get_stats(self):
         """获取素材库统计信息"""
         try:
@@ -164,11 +237,50 @@ class KnowledgeBase:
             }
         except Exception:
             return {
-                "total": 0, 
-                "unused": 0, 
-                "used": 0, 
+                "total": 0,
+                "unused": 0,
+                "used": 0,
                 "high_quality_unused": 0,
-                "threshold": INSPIRATION_THRESHOLD, 
+                "threshold": INSPIRATION_THRESHOLD,
                 "ready_to_publish": False,
                 "ready_to_create": False
             }
+
+    def _should_flush(self):
+        """判断是否应该刷新到磁盘"""
+        return (
+            len(self._buffer) >= self._buffer_max_size or
+            time.time() - self._last_flush_time > self._flush_interval
+        )
+
+    def _flush_to_disk(self):
+        """批量写入磁盘"""
+        if not self._buffer:
+            return
+
+        try:
+            # 读取现有数据
+            data = self._load_data()
+
+            # 批量追加缓冲区数据
+            data.extend(self._buffer)
+
+            # 写入磁盘
+            self._save_data(data)
+
+            count = len(self._buffer)
+            self._buffer.clear()
+            self._last_flush_time = time.time()
+
+            self.recorder.log("info", f"💾 [知识库-写入] ✅ 已刷新 {count} 条到磁盘")
+
+        except Exception as e:
+            self.recorder.log("error", f"📚 [知识库] 刷新失败: {e}")
+
+    def force_flush(self):
+        """强制刷新缓冲区（程序退出时调用）"""
+        if self._buffer:
+            self.recorder.log("info", f"💾 [知识库-强制刷新] 缓冲区还有 {len(self._buffer)} 条待写入")
+            self._flush_to_disk()
+        else:
+            self.recorder.log("info", "💾 [知识库-强制刷新] 缓冲区为空，无需刷新")

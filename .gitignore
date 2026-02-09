@@ -26,6 +26,7 @@ logs/
 # === 用户数据（包含浏览记录和素材） ===
 data/inspiration.json
 data/drafts.json
+data/products.json  # 产品库包含商店链接，敏感信息
 
 # === 下载的资源 ===
 assets/images/

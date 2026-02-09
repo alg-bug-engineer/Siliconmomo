@@ -31,6 +31,8 @@ async def main():
     except KeyboardInterrupt:
         recorder.log("warning", "用户手动中断")
     finally:
+        # 强制刷新知识库缓冲区
+        worker.kb.force_flush()
         recorder.save_report()
         await bm.disconnect()
 

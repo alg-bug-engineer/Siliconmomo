@@ -4,7 +4,8 @@
 """
 import asyncio
 from playwright.async_api import Page
-from config.settings import XHS_CREATOR_URL, PUBLISH_SELECTORS
+from config.settings import XHS_CREATOR_URL, PUBLISH_SELECTORS, BASE_URL
+from core.content_cleaner import ContentCleaner
 
 class PublisherAgent:
     def __init__(self, page: Page, recorder):
@@ -20,14 +21,26 @@ class PublisherAgent:
         title = draft.get("title", "")
         content = draft.get("content", "")
         image_path = draft.get("image_local_path", "")
-        
+
         if not title or not content:
             self.recorder.log("error", "📤 [发布员] 草稿缺少标题或内容")
             return False
-        
+
+        # 🔧 清洗内容：去除 Markdown 格式符号
+        self.recorder.log("info", "🧹 [发布员] 清洗内容，去除 Markdown 格式...")
+        title = ContentCleaner.clean_for_xiaohongshu(title)
+        content = ContentCleaner.clean_for_xiaohongshu(content)
+        self.recorder.log("info", "🧹 [发布员] 内容清洗完成")
+
         try:
             self.recorder.log("info", f"📤 [发布员] 开始发布: 《{title[:30]}...》")
-            
+
+            # 环境检查：确保不在即梦等第三方平台
+            if "xiaohongshu.com" not in self.page.url:
+                self.recorder.log("warning", f"📤 [发布员] 环境偏离: {self.page.url}，正在恢复...")
+                await self.page.goto(BASE_URL, wait_until="networkidle")
+                await asyncio.sleep(2)
+
             # 1. 导航到发布页面
             await self.page.goto(XHS_CREATOR_URL, wait_until="networkidle")
             await asyncio.sleep(3)

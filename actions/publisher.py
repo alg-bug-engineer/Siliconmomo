@@ -4,12 +4,20 @@ import json
 import os
 import logging
 import asyncio
+import sys
+from pathlib import Path
+
+# 添加项目根目录到路径
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from core.content_cleaner import ContentCleaner
 
 log_path = os.path.expanduser('~/Desktop/xhsai_error.log')
 logging.basicConfig(filename=log_path, level=logging.DEBUG)
 
 class XiaohongshuPoster:
-    def __init__(self, user_id: int = None, browser_environment=None, cdp_url=None):
+    def __init__(self, user_id: int = None, browser_environment=None, cdp_url=None, auto_publish=True):
         self.playwright = None
         self.browser = None
         self.context = None
@@ -18,6 +26,7 @@ class XiaohongshuPoster:
         self.user_id = user_id
         self.browser_environment = browser_environment
         self.cdp_url = cdp_url or os.environ.get("XHS_CDP_URL")
+        self.auto_publish = auto_publish  # 是否自动点击发布按钮
 
     def _get_env_value(self, key, default=None):
         env = self.browser_environment
@@ -431,6 +440,21 @@ class XiaohongshuPoster:
             print("--- 开始输入标题和内容 ---")
             await asyncio.sleep(5)
 
+            # 🔧 清洗内容：去除 Markdown 格式符号
+            print("🧹 清洗内容，去除 Markdown 格式...")
+            original_title = title
+            original_content = content
+
+            # 清洗标题（去除 ** 等符号）
+            title = ContentCleaner.clean_for_xiaohongshu(title)
+            # 清洗内容（去除 Markdown 格式）
+            content = ContentCleaner.clean_for_xiaohongshu(content)
+
+            if title != original_title:
+                print(f"   标题已清洗: {original_title[:50]}... → {title[:50]}...")
+            if content != original_content:
+                print(f"   内容已清洗 (去除 ** 等格式符号)")
+
             # 输入标题
             print("输入标题...")
             try:
@@ -511,9 +535,41 @@ class XiaohongshuPoster:
             except Exception as e:
                 print(f"内容输入失败: {e}")
 
-            # 等待用户手动发布
-            print("请手动检查内容并点击发布按钮完成发布...")
-            await asyncio.sleep(60)
+            # 🚀 自动点击发布按钮
+            if self.auto_publish:
+                print("\n" + "="*60)
+                print("🚀 准备自动点击发布按钮...")
+                print("="*60)
+
+                success = await self._click_publish_button()
+
+                if success:
+                    print("✅ 发布按钮已点击！")
+                    print("⏳ 等待发布完成...")
+
+                    # 等待发布完成
+                    await asyncio.sleep(5)
+
+                    # 检查是否有确认弹窗
+                    await self._handle_confirm_dialog()
+
+                    # 等待发布成功提示
+                    await self._wait_for_publish_success()
+
+                    print("\n" + "="*60)
+                    print("🎉 发布流程完成！")
+                    print("="*60 + "\n")
+                else:
+                    print("⚠️  自动点击发布按钮失败")
+                    print("💡 提示：请手动点击发布按钮")
+
+                    # 失败时也等待一段时间让用户手动操作
+                    print("\n等待 30 秒供手动发布...")
+                    await asyncio.sleep(30)
+            else:
+                # 等待用户手动发布
+                print("请手动检查内容并点击发布按钮完成发布...")
+                await asyncio.sleep(60)
 
         except Exception as e:
             print(f"发布文章时出错: {str(e)}")
@@ -525,6 +581,165 @@ class XiaohongshuPoster:
             except:
                 pass
             raise
+
+    async def _click_publish_button(self):
+        """点击发布按钮"""
+        try:
+            print("🔍 查找发布按钮...")
+
+            # 多种发布按钮选择器
+            publish_selectors = [
+                # 根据配置文件
+                "button.publish-btn",
+                # 按钮文字包含"发布"
+                "button:has-text('发布')",
+                # 通用按钮选择器
+                ".publish-btn",
+                # 可能的类名组合
+                "button[class*='publish']",
+                "button[class*='btn-publish']",
+                # 最后尝试：通过CSS类和文字组合
+                ".btn:has-text('发布')",
+            ]
+
+            for selector in publish_selectors:
+                try:
+                    print(f"  尝试选择器: {selector}")
+                    await self.page.wait_for_selector(selector, state="visible", timeout=5000)
+
+                    # 滚动到按钮可见
+                    element = self.page.locator(selector).first
+                    await element.scroll_into_view_if_needed()
+                    await asyncio.sleep(1)
+
+                    # 点击按钮
+                    await element.click()
+                    print(f"  ✅ 成功点击发布按钮 (选择器: {selector})")
+                    return True
+
+                except Exception as e:
+                    print(f"  ❌ 选择器失败: {selector} - {str(e)}")
+                    continue
+
+            # 如果所有选择器都失败，尝试JavaScript点击
+            print("  🔄 尝试 JavaScript 方式点击...")
+            try:
+                result = await self.page.evaluate("""
+                    () => {
+                        // 查找所有可能的发布按钮
+                        const buttons = document.querySelectorAll('button');
+                        for (let btn of buttons) {
+                            const text = btn.textContent || '';
+                            const className = btn.className || '';
+
+                            // 检查按钮文字或类名是否包含"发布"
+                            if (text.includes('发布') || className.includes('publish')) {
+                                // 确保按钮可见且可点击
+                                const rect = btn.getBoundingClientRect();
+                                if (rect.width > 0 && rect.height > 0) {
+                                    btn.click();
+                                    return {
+                                        success: true,
+                                        text: text,
+                                        className: className
+                                    };
+                                }
+                            }
+                        }
+                        return { success: false };
+                    }
+                """)
+
+                if result.get('success'):
+                    print(f"  ✅ JavaScript 点击成功 (文字: {result.get('text')}, 类名: {result.get('className')})")
+                    return True
+                else:
+                    print("  ❌ JavaScript 点击失败：未找到发布按钮")
+
+            except Exception as e:
+                print(f"  ❌ JavaScript 点击异常: {str(e)}")
+
+            # 所有方法都失败，截保存 Debug
+            print("  📸 保存发布按钮截图: debug_publish_button.png")
+            await self.page.screenshot(path="debug_publish_button.png")
+
+            return False
+
+        except Exception as e:
+            print(f"❌ 点击发布按钮时出错: {str(e)}")
+            return False
+
+    async def _handle_confirm_dialog(self):
+        """处理确认弹窗（如果有）"""
+        try:
+            print("🔍 检查确认弹窗...")
+
+            # 等待一小段时间让弹窗出现
+            await asyncio.sleep(2)
+
+            # 常见的确认弹窗选择器
+            confirm_selectors = [
+                "button:has-text('确认发布')",
+                "button:has-text('确定')",
+                "button:has-text('发布')",
+                ".confirm-btn",
+                ".dialog-btn:has-text('确认')",
+            ]
+
+            for selector in confirm_selectors:
+                try:
+                    if await self.page.locator(selector).count() > 0:
+                        print(f"  ✅ 发现确认弹窗，点击确认: {selector}")
+                        await self.page.click(selector)
+                        await asyncio.sleep(2)
+                        return True
+                except:
+                    continue
+
+            print("  ℹ️  未发现确认弹窗")
+            return False
+
+        except Exception as e:
+            print(f"  ⚠️  处理确认弹窗时出错: {str(e)}")
+            return False
+
+    async def _wait_for_publish_success(self):
+        """等待发布成功"""
+        try:
+            print("⏳ 等待发布成功提示...")
+
+            # 等待最多15秒
+            for i in range(15):
+                await asyncio.sleep(1)
+
+                # 检查是否有成功提示
+                success_indicators = [
+                    ".publish-success",
+                    ":text('发布成功')",
+                    ":text('笔记已发布')",
+                    ":text('发布完成')",
+                ]
+
+                for indicator in success_indicators:
+                    try:
+                        if await self.page.locator(indicator).count() > 0:
+                            print(f"  ✅ 检测到发布成功: {indicator}")
+                            return True
+                    except:
+                        continue
+
+                # 检查URL是否跳转（发布成功后可能会跳转到笔记详情页）
+                current_url = self.page.url
+                if "xiaohongshu.com" in current_url and "/explore/" in current_url:
+                    print(f"  ✅ 检测到页面跳转，可能已发布成功")
+                    return True
+
+            print("  ℹ️  未检测到明确的成功提示，但可能已发布")
+            return False
+
+        except Exception as e:
+            print(f"  ⚠️  等待发布成功时出错: {str(e)}")
+            return False
 
     async def close(self, force=False):
         """关闭浏览器连接

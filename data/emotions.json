@@ -1,5 +1,33 @@
 {
   "styles": {
+    "产品宣传": {
+      "keywords": [
+        "效率神器",
+        "浏览器插件",
+        "开发工具",
+        "小红书工具",
+        "采集工具",
+        "运营工具",
+        "必备神器",
+        "效率提升"
+      ],
+      "prompt_template": "你是一个 AI 杂货店主，正在推荐自己的产品。\n\n【任务】\n基于产品信息「{product_info}」，创作一篇小红书产品推荐笔记。\n\n【产品信息】\n产品名称：{name}\n核心卖点：{tagline}\n价格：{price}\n解决痛点：{pain_points}\n使用场景：{use_cases}\n\n【要求】\n1. **开头吸引**：用痛点或场景引入，让读者有共鸣\n2. **真诚分享**：以真实使用者的角度分享，不过度推销\n3. **突出价值**：强调工具解决了什么问题，带来了什么改变\n4. **使用场景**：具体描述什么情况下用，怎么用\n5. **引导转化**：自然引导感兴趣的人了解更多\n6. 多用Emoji：🚀💡⚡✨🎯🔥\n7. 字数：200-400字\n8. 标题要有吸引力，体现价值\n\n【避免】\n- 不要像硬广一样堆砌功能\n- 不要夸大效果，要真实\n- 不要频繁强调价格\n\n【输出格式 (JSON Only)】\n{\n    \"title\": \"标题（带emoji）\",\n    \"content\": \"正文...\",\n    \"style\": \"产品宣传\",\n    \"tags\": [\"#效率神器\", \"#浏览器插件\", \"#工具推荐\"]\n}",
+      "emoji_pool": ["🚀", "💡", "⚡", "✨", "🎯", "🔥", "💻", "🛠️", "⭐", "🎁"],
+      "tone": "真诚/分享/实用"
+    },
+    "用户案例": {
+      "keywords": [
+        "使用体验",
+        "真实案例",
+        "效率提升",
+        "使用心得",
+        "效果对比",
+        "实际效果"
+      ],
+      "prompt_template": "你是一个 AI 杂货店主，分享真实的使用案例。\n\n【任务】\n基于产品「{name}」和场景「{scenario}」，创作一篇小红书使用案例笔记。\n\n【要求】\n1. **故事化叙述**：以第一人称讲述遇到的问题和解决过程\n2. **真实可信**：细节要具体，让读者感受到真实性\n3. **前后对比**：清楚展示使用前后的效率变化\n4. **数据支撑**：用具体数字说明效果（如节省时间、提高效率）\n5. 多用Emoji：💼📈🎯⭐🏆\n6. 字数：250-400字\n7. 标题体现效果对比\n\n【输出格式 (JSON Only)】\n{\n    \"title\": \"标题（带emoji）\",\n    \"content\": \"正文...\",\n    \"style\": \"用户案例\",\n    \"tags\": [\"#使用体验\", \"#效率提升\", \"#真实案例\"]\n}",
+      "emoji_pool": ["💼", "📈", "🎯", "⭐", "🏆", "💎", "✅", "🔥", "💪", "🚀"],
+      "tone": "真实/故事/对比"
+    },
     "工具推荐": {
       "keywords": [
         "神器推荐",
@@ -79,6 +107,19 @@
     }
   },
   "image_prompts": {
+    "产品宣传": [
+      "clean product showcase, modern minimal design, professional lighting, 8K quality",
+      "product in use scenario, realistic workspace, clean composition",
+      "before and after comparison, clean layout, modern design",
+      "efficiency improvement visualization, clean infographics, professional",
+      "product feature highlight, modern tech aesthetic, clean design"
+    ],
+    "用户案例": [
+      "storytelling illustration, before and after scenario, modern design",
+      "productivity comparison chart, clean layout, professional quality",
+      "user experience visualization, modern aesthetic, clean design",
+      "efficiency metrics display, clean infographics, professional"
+    ],
     "工具推荐": [
       "modern tech workspace, computer screen with AI interface, clean minimal setup, professional lighting, 8K quality",
       "futuristic dashboard, AI tools interface, holographic elements, blue purple gradient, high tech aesthetic",
@@ -116,6 +157,13 @@
     ]
   },
   "comment_templates": {
+    "软广推广": [
+      "这个我也有同款，用了几个月确实省了不少时间 👍",
+      "之前也遇到过这个问题，后来发现XX插件能一键解决 🚀",
+      "推荐试试我用的这个，效率提升很明显",
+      "我之前也手动搞过，后来发现一个工具能自动处理，省心多了 💡",
+      "分享一个我一直在用的，希望能帮到你 ✨"
+    ],
     "工具交流": [
       "这个工具真的好用！🔧",
       "已收藏，慢慢试 ✨",

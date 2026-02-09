@@ -7,9 +7,50 @@ from playwright.async_api import Page, expect
 from config.settings import JIMENG_GENERATE_URL, IMAGES_DIR, JIMENG_SELECTORS
 
 class ArtistAgent:
+    """美术师 - 负责图片生成"""
+
+    # Momo 专属视觉风格配置
+    VISUAL_STYLE = {
+        "主色调": "科技蓝 (#1E90FF, #4169E1)",
+        "辅助色": "深空灰 (#2C3E50)、纯净白 (#FFFFFF)",
+        "场景元素": "现代工作空间、软件界面、屏幕展示",
+        "风格特征": "极简设计、专业光效、科技感",
+        "禁止元素": "赛博朋克、抽象艺术、过度设计"
+    }
+
     def __init__(self, page: Page, recorder):
         self.page = page
         self.recorder = recorder
+
+    def enhance_prompt_with_style(self, original_prompt: str) -> str:
+        """
+        使用 Momo 专属视觉风格增强提示词
+
+        Args:
+            original_prompt: 原始英文提示词
+
+        Returns:
+            增强后的提示词
+        """
+        style_enhancements = [
+            "modern tech aesthetic",
+            "clean minimalist design",
+            "professional workspace setting",
+            "blue and white color scheme",
+            "soft professional lighting",
+            "high quality screenshot style",
+            "crisp UI interface",
+            "modern software design"
+        ]
+
+        # 如果原提示词太短，添加风格增强
+        if len(original_prompt) < 100:
+            # 随机选择2-3个风格增强词
+            selected = random.sample(style_enhancements, min(3, len(style_enhancements)))
+            enhanced = f"{original_prompt}, {', '.join(selected)}"
+            return enhanced
+
+        return original_prompt
 
     async def open_studio(self):
         """打开即梦工作台"""
@@ -22,8 +63,13 @@ class ArtistAgent:
         await self.page.keyboard.press("Escape")
 
     async def generate_image(self, prompt):
+        # 🔧 应用 Momo 专属视觉风格增强
+        enhanced_prompt = self.enhance_prompt_with_style(prompt)
+
         self.recorder.log("info", f"🎨 [美术师] 收到需求: {prompt[:30]}...")
-        
+        if enhanced_prompt != prompt:
+            self.recorder.log("debug", f"🎨 [美术师] 已应用 Momo 专属视觉风格")
+
         try:
             # 1. 定位输入框
             textarea = self.page.locator(JIMENG_SELECTORS["prompt_textarea"]).first
@@ -48,13 +94,13 @@ class ArtistAgent:
             
             # # 2. 模拟真人输入 使用 type 逐字输入，确保触发 JS 事件
             self.recorder.log("debug", "正在输入提示词...")
-            if len(prompt) > 10:
+            if len(enhanced_prompt) > 10:
                 # 长文本：先 fill 大部分，最后几个字 type，兼顾速度和事件触发
-                await textarea.fill(prompt[:-5])
+                await textarea.fill(enhanced_prompt[:-5])
                 await asyncio.sleep(0.5)
-                await textarea.type(prompt[-5:], delay=50)
+                await textarea.type(enhanced_prompt[-5:], delay=50)
             else:
-                await textarea.type(prompt, delay=50)
+                await textarea.type(enhanced_prompt, delay=50)
             
             # 输入后，点击一下空白处或者按个空格，确保状态同步
             await self.page.keyboard.press("Space")
@@ -156,13 +202,33 @@ class ArtistAgent:
             await self.recorder.record_error(self.page, "生图失败")
             return None
 
+    async def ensure_back_to_xhs(self):
+        """生图完成后，确保返回小红书环境"""
+        try:
+            self.recorder.log("info", "🔄 [美术师] 生图完成，返回小红书环境...")
+
+            # 关闭可能的弹窗
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.5)
+
+            # 导航回小红书首页
+            from config.settings import BASE_URL
+            await self.page.goto(BASE_URL)
+            await asyncio.sleep(2)
+
+            self.recorder.log("success", "✅ [美术师] 已返回小红书环境")
+            return True
+        except Exception as e:
+            self.recorder.log("error", f"⚠️ [美术师] 返回小红书失败: {e}")
+            return False
+
     async def _download_image(self, url):
         """下载 helper"""
         try:
             timestamp = int(random.random() * 100000)
             filename = f"jimeng_{timestamp}.webp" # 即梦通常是 webp
             filepath = IMAGES_DIR / filename
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as resp:
                     if resp.status == 200:

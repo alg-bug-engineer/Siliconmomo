@@ -1,4 +1,5 @@
 import json
+import random
 from zai import ZhipuAiClient  # 更新 SDK 引入
 from config.settings import ZHIPU_AI_KEY, LLM_MODEL, TARGET_TOPICS
 
@@ -20,7 +21,7 @@ class LLMClient:
         分析给定的帖子内容，判断是否值得互动和收藏作为素材，如果值得，生成一条真实的、口语化的评论。
 
         【判断标准】
-        1. 帖子必须属于以下领域之一：{", ".join(TARGET_TOPICS)}。如果帖子是无关的（如情感、穿搭、娱乐），请标记为不相关。
+        1. 帖子必须属于以下领域之一：{", ".join(TARGET_TOPICS)}。如果帖子是无关的（如情感、穿搭、娱乐、游戏），请标记为不相关。
         2. 如果帖子正文文字太少（少于10个字），或者是纯图片无意义内容，请标记为不需要评论。
         3. **高质量标准**：文案有实用价值、信息清晰、有推荐意义、适合仿写创作。只有同时满足以下条件的才算高质量：
            - 文案有明确的内容类型（工具推荐/功能介绍/使用教程/避坑指南/合集推荐）
@@ -76,9 +77,162 @@ class LLMClient:
         except Exception as e:
             self.recorder.log("error", f"🧠 [大脑] 思考失败: {e}")
             return {
-                "is_relevant": False, 
+                "is_relevant": False,
                 "is_high_quality": False,
-                "should_comment": False, 
+                "should_comment": False,
                 "comment_text": "",
                 "style_hint": ""
             }
+
+    # === 软广评论生成 ===
+
+    def generate_promo_comment(self, title: str, content: str, product: dict, interaction_type: str = "help_first") -> dict:
+        """
+        生成软广评论
+        :param title: 帖子标题
+        :param content: 帖子内容
+        :param product: 产品对象
+        :param interaction_type: 互动类型（help_first/value_share/direct_promo）
+        :return: 评论结果字典
+        """
+        product_name = product.get("name", "")
+        product_tagline = product.get("tagline", "")
+        product_category = product.get("category", "")
+
+        # 根据互动类型调整策略
+        if interaction_type == "help_first":
+            strategy_desc = "先提供帮助和解决方案，然后自然地提及产品作为更高效的替代方案"
+            tone_desc = "热心助人、真诚分享"
+        elif interaction_type == "value_share":
+            strategy_desc = "分享自己的使用经验和心得，在合适的时候提及使用过的工具"
+            tone_desc = "经验分享、真诚交流"
+        else:  # direct_promo
+            strategy_desc = "直接但克制地推荐产品，强调它正好能解决帖子中的问题"
+            tone_desc = "直接推荐、解决问题"
+
+        prompt = f"""
+你是一个活跃在小红书的 AI 杂货店博主"Momo"，你有一款产品：{product_name}（{product_tagline}）。
+
+【任务目标】
+针对下面的帖子，生成一条软广评论。不要明显像广告，要像真实的用户交流。
+
+【帖子信息】
+标题：{title}
+正文：{content[:500]}
+
+【你的产品】
+名称：{product_name}
+卖点：{product_tagline}
+分类：{product_category}
+
+【评论策略】
+{strategy_desc}
+
+【要求】
+1. **语气**：{tone_desc}，像真人博主在聊天
+2. **开头**：先回应帖子的内容或问题，表示理解
+3. **产品提及**：
+   - help_first：回答问题 → 顺带说"我用过一个工具能简化这个"
+   - value_share：分享经历 → 提及"我用XX工具，效率提升不少"
+   - direct_promo：说明产品正好解决这个问题
+4. **自然度**：不要堆砌产品信息，不要频繁重复产品名
+5. **长度**：30-80字
+6. **Emoji**：适当使用 1-2 个（🚀💡✨等）
+
+【避免】
+- 不要像硬广一样罗列功能
+- 不要过分强调价格或购买链接
+- 不要夸大效果
+
+【输出格式 (JSON Only)】
+{{
+    "comment_text": "评论内容...",
+    "is_natural": true,  // 评论是否自然不过分像广告
+    "product_mentioned": true  // 是否提到了产品
+}}
+"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": "你是一个擅长软性推广的小红书博主。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.8
+            )
+
+            result_text = response.choices[0].message.content.strip()
+
+            # 清洗 Markdown
+            if result_text.startswith("```json"):
+                result_text = result_text.split("```json")[1]
+            if result_text.endswith("```"):
+                result_text = result_text.rsplit("```", 1)[0]
+
+            result = json.loads(result_text.strip())
+
+            # 添加额外信息
+            result["interaction_type"] = interaction_type
+            result["product_id"] = product.get("id")
+
+            self.recorder.log("info", f"🧠 [软广评论] 生成完成: {result.get('comment_text', '')[:30]}...")
+            return result
+
+        except Exception as e:
+            self.recorder.log("error", f"🧠 [软广评论] 生成失败: {e}")
+            # 返回简单的兜底评论
+            fallback_comments = [
+                f"这个问题我也遇到过，后来用一个工具能一键处理，省事多了 🚀",
+                f"推荐试试我用的这个，效率提升很明显 💡",
+                f"我之前也手动搞过，后来发现{product_name}能自动处理 ✨"
+            ]
+            return {
+                "comment_text": random.choice(fallback_comments),
+                "is_natural": True,
+                "product_mentioned": True,
+                "interaction_type": interaction_type,
+                "product_id": product.get("id")
+            }
+
+    def match_post_to_product(self, title: str, content: str, products: list) -> dict:
+        """
+        分析帖子内容，匹配合适的产品
+        :param title: 帖子标题
+        :param content: 帖子内容
+        :param products: 产品列表
+        :return: 匹配的产品或 None
+        """
+        if not products:
+            return None
+
+        combined_text = f"{title} {content}".lower()
+
+        # 计算每个产品的匹配分数
+        scored_products = []
+        for product in products:
+            score = 0
+            keywords = product.get("keywords", [])
+
+            # 关键词匹配
+            matched_keywords = []
+            for keyword in keywords:
+                if keyword.lower() in combined_text:
+                    score += 1
+                    matched_keywords.append(keyword)
+
+            if score > 0:
+                scored_products.append({
+                    "product": product,
+                    "score": score,
+                    "matched_keywords": matched_keywords
+                })
+
+        # 返回分数最高的产品
+        if scored_products:
+            scored_products.sort(key=lambda x: x["score"], reverse=True)
+            best = scored_products[0]
+            self.recorder.log("info", f"🧠 [产品匹配] 匹配成功: {best['product'].get('name')} (分数: {best['score']})")
+            return best["product"]
+
+        return None

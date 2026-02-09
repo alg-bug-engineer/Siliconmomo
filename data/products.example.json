@@ -1,0 +1,133 @@
+{
+  "_comment": "产品库示例文件 - 复制为 products.json 并填入你的真实信息",
+  "products": [
+    {
+      "id": "cookie_extractor",
+      "name": "一键提取Cookies插件",
+      "tagline": "10秒获取任何网站Cookies，支持所有主流浏览器",
+      "category": "浏览器工具",
+      "price": "19.9元",
+      "store_url": "https://your-store-link.com/product1",
+      "pain_points": [
+        "开发调试需要频繁手动复制Cookies",
+        "不懂F12，找不到Cookies在哪里",
+        "每次都要百度怎么获取，太麻烦"
+      ],
+      "benefits": [
+        "一键复制，省时省力",
+        "小白也能轻松使用",
+        "支持Chrome/Edge/Firefox等所有浏览器"
+      ],
+      "use_cases": [
+        "开发调试接口",
+        "爬虫数据采集",
+        "网站测试",
+        "自动化脚本"
+      ],
+      "keywords": ["cookies", "浏览器", "开发", "调试", "爬虫"],
+      "content_angles": [
+        "开发者神器：为什么每次获取Cookies这么麻烦？",
+        "效率提升：从3分钟到10秒的秘密",
+        "小白友好：不需要懂技术也能用的工具"
+      ],
+      "promo_stats": {
+        "total_mentions": 0,
+        "last_promote": null,
+        "success_count": 0
+      }
+    },
+    {
+      "id": "xhs_feishu_collector",
+      "name": "小红书帖子采集到飞书多维表格",
+      "tagline": "一键采集小红书内容到飞书，爆款分析更高效",
+      "category": "小红书工具",
+      "price": "29.9元",
+      "store_url": "https://your-store-link.com/product2",
+      "pain_points": [
+        "看到好内容想收藏，但小红书收藏功能太乱",
+        "想做爆款分析，手动复制太慢",
+        "团队协作需要共享数据，Excel不好同步"
+      ],
+      "benefits": [
+        "一键采集，直接到飞书表格",
+        "免登录，无需账号密码",
+        "自动去重，支持批量采集",
+        "团队协作，实时同步"
+      ],
+      "use_cases": [
+        "爆款文案素材库",
+        "竞品分析",
+        "团队内容共享",
+        "数据分析"
+      ],
+      "keywords": ["小红书", "飞书", "采集", "爆款分析", "内容运营"],
+      "content_angles": [
+        "做小红书运营的福音：爆款内容一键采集",
+        "从手动复制到自动采集，效率提升100倍",
+        "团队必备：飞书+小红书的完美组合"
+      ],
+      "promo_stats": {
+        "total_mentions": 0,
+        "last_promote": null,
+        "success_count": 0
+      }
+    },
+    {
+      "id": "xhs_operator_platform",
+      "name": "小红书运营平台插件",
+      "tagline": "采集+分析+仿写，一款插件搞定小红书运营",
+      "category": "小红书工具",
+      "price": "49.9元",
+      "store_url": "https://your-store-link.com/product3",
+      "pain_points": [
+        "多账号管理太累，来回切换",
+        "想分析竞品数据，不知道怎么下手",
+        "看到爆款想模仿，但不知道怎么改写"
+      ],
+      "benefits": [
+        "一站式运营平台",
+        "博主信息一键采集",
+        "爆款数据分析",
+        "一键仿写，激发灵感"
+      ],
+      "use_cases": [
+        "多账号运营",
+        "竞品分析",
+        "爆款拆解",
+        "内容创作辅助"
+      ],
+      "keywords": ["小红书运营", "博主分析", "爆款", "仿写", "内容创作"],
+      "content_angles": [
+        "小红书运营必备：一款插件等于3个员工",
+        "从0到10w粉，我是怎么用工具辅助的",
+        "揭秘爆款背后的逻辑：数据分析+仿写技巧"
+      ],
+      "promo_stats": {
+        "total_mentions": 0,
+        "last_promote": null,
+        "success_count": 0
+      }
+    }
+  ],
+  "content_strategy": {
+    "_comment": "内容策略配置 - 保守型",
+    "promo_ratio": 0.3,
+    "value_ratio": 0.5,
+    "others_ratio": 0.2,
+    "max_daily_promo": 2,
+    "promo_interval_hours": 6,
+    "daily_publish_limit": 4
+  },
+  "interaction_strategy": {
+    "_comment": "互动策略配置 - 保守型",
+    "help_first_ratio": 0.6,
+    "value_share_ratio": 0.3,
+    "direct_promo_ratio": 0.1,
+    "max_daily_direct_promo": 1,
+    "trigger_keywords": {
+      "cookie_extractor": ["cookie", "cookies", "获取", "提取", "调试", "开发"],
+      "xhs_feishu_collector": ["小红书", "采集", "飞书", "表格", "收藏", "整理"],
+      "xhs_operator_platform": ["小红书运营", "爆款", "分析", "仿写", "博主", "竞品"]
+    }
+  }
+}
