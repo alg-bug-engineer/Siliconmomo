@@ -3,3 +3,10 @@ zai
 httpx
 tenacity
 rapidocr_onnxruntime
+zai-sdk
+beautifulsoup4
+aiohttp
+markdown
+rapidocr
+rapidocr
+onnxruntime

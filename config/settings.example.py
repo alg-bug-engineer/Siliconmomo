@@ -152,7 +152,8 @@ SELECTORS = {
 
     # 详情页内容提取 (根据你提供的HTML确认)
     "detail_title": "#detail-title",
-    "detail_desc": "#detail-desc", # 稍微放宽，获取 desc 下所有文本
+    "detail_desc": "#detail-desc", # 放宽选择器，获取 desc 下所有文本
+    "detail_author": ".username", # 博主名字
 
     # 评论区核心元素
     # 注意：如果出现 .comments-login 说明没登录或被限制，无法评论
@@ -184,6 +185,7 @@ SELECTORS = {
 
     # 详情页
     "note_detail_mask": ".note-detail-mask", # 详情页遮罩
+    "author_avatar": ".avatar img", # 博主头像
     "btn_like": [
         "div.interactions.engage-bar span.like-lottie",
         "span.like-wrapper"

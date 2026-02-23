@@ -19,7 +19,7 @@ WHISPER_CPP_PATH = os.getenv(
 )
 MODEL_PATH = os.getenv(
     "MODEL_PATH",
-    str(BASE_DIR / "whisper.cpp" / "models" / "ggml-small.bin")
+    str(BASE_DIR / "whisper.cpp" / "models" / "ggml-base.bin")
 )
 
 # Server config

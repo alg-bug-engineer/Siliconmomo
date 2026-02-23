@@ -10,7 +10,13 @@ import aiohttp
 import io
 
 import httpx
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+try:
+    from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+except ModuleNotFoundError:  # 允许“仅从 JSON 生成报告”场景不安装 playwright
+    Page = object  # type: ignore
+
+    class PlaywrightTimeoutError(Exception):
+        pass
 
 from config.settings import (
     DEEP_RESEARCH_ENABLED,
@@ -27,6 +33,7 @@ from core.browser_manager import BrowserManager
 from core.llm_client import LLMClient
 from core.human_motion import HumanMotion
 from core.video_downloader import VideoDownloader
+from core.report_renderer import render_deep_research_html
 from rapidocr import RapidOCR
 
 class ResearchAgent:
@@ -327,10 +334,12 @@ class ResearchAgent:
             return []
 
     async def _extract_content_from_page(self):
-        """提取帖子完整内容：标题、正文、图片、视频、评论"""
+        """提取帖子完整内容：标题、正文、作者、图片、视频、评论"""
         detail = {
             "url": self.page.url,  # 添加当前页面URL
             "title": "", "content": "",
+            "author": "",  # 新增：博主名字
+            "author_avatar": "",  # 新增：博主头像
             "publish_date": "",  # 新增：发布日期
             "image_urls": [], "video_url": "", "video_local_path": "", "media_type": "image",
             "comments": [],
@@ -343,6 +352,22 @@ class ResearchAgent:
 
             if await self.page.locator(SELECTORS["detail_desc"]).count() > 0:
                 detail["content"] = await self.page.locator(SELECTORS["detail_desc"]).inner_text()
+
+            # 提取作者信息（使用.first避免多个匹配）
+            author_locator = self.page.locator(SELECTORS["detail_author"]).first
+            if await author_locator.count() > 0:
+                try:
+                    detail["author"] = await author_locator.inner_text()
+                except:
+                    detail["author"] = ""
+            
+            # 提取作者头像
+            avatar_locator = self.page.locator(SELECTORS["author_avatar"]).first
+            if await avatar_locator.count() > 0:
+                try:
+                    detail["author_avatar"] = await avatar_locator.get_attribute("src") or ""
+                except:
+                    detail["author_avatar"] = ""
 
             # 提取发布日期
             detail["publish_date"] = await self._extract_publish_date()
@@ -396,8 +421,9 @@ class ResearchAgent:
 
             media_count = len(detail["image_urls"]) if detail["media_type"] == "image" else 1
             content_preview = detail['content'][:30].replace('\n', ' ') if detail['content'] else '(无正文)'
+            author_preview = detail['author'][:15] if detail['author'] else '(未知作者)'
             self.recorder.log("info", 
-                f"📸 [抓取完成] 帖子 {note_id_short}... | {detail['media_type']}x{media_count} | 评论x{len(detail['comments'])} | 内容: {content_preview}...")
+                f"📸 [抓取完成] 帖子 {note_id_short}... | 作者:{author_preview} | {detail['media_type']}x{media_count} | 评论x{len(detail['comments'])} | 内容: {content_preview}...")
 
         except Exception as e:
             self.recorder.log("warning", f"内容提取异常: {e}")
@@ -682,7 +708,192 @@ class ResearchAgent:
         prompt = self._prepare_llm_prompt(research_data)
         # Assuming llm_client has a method like generate_text
         report = await self.llm_client.generate_text(prompt, model=DEEP_RESEARCH_LLM_MODEL)
-        return report
+        return self._postprocess_report(report, research_data)
+
+    def _postprocess_report(self, report: str, research_data: list[dict]) -> str:
+        """
+        目标：把 LLM 常见的“引用写法”强制修正为可点击链接，避免参考文献/正文出现纯文本 URL 或反引号包裹引用。
+        - 将 `见[帖子[3]]评论` / 见[帖子[3]]评论 → 见[帖子[3]](URL)评论
+        - 将 [帖子[3]]（未带链接）→ [帖子[3]](URL)
+        - 尽量跳过 fenced code block（```...```）以免污染代码/mermaid
+        """
+        if not report or not research_data:
+            return report
+
+        idx_to_url: dict[int, str] = {}
+        for i, post in enumerate(research_data, 1):
+            url = (post.get("url") or "").strip()
+            if url:
+                idx_to_url[i] = url
+
+        if not idx_to_url:
+            return report
+
+        def _fix_line(line: str) -> str:
+            # 去掉引用外层反引号（仅针对“见[帖子[..]]”这类片段）
+            line = re.sub(r"`\s*(见\s*\[帖子\[(\d+)\]\][^`]*)\s*`", r"\1", line)
+
+            # 见[帖子[3]]评论 → 见[帖子[3]](URL)评论
+            def repl_seen(m: re.Match):
+                idx = int(m.group(2))
+                url = idx_to_url.get(idx)
+                if not url:
+                    return m.group(0)
+                tail = m.group(3) or ""
+                return f"见[帖子[{idx}]]({url}){tail}"
+
+            # 若已经是 Markdown 链接（]后紧跟(），则不重复注入 URL
+            line = re.sub(r"(见\s*)\[帖子\[(\d+)\]\](?!\()(评论)?", repl_seen, line)
+
+            # [帖子[3]]（未带链接）→ [帖子[3]](URL)
+            def repl_bare(m: re.Match):
+                idx = int(m.group(1))
+                url = idx_to_url.get(idx)
+                if not url:
+                    return m.group(0)
+                return f"[帖子[{idx}]]({url})"
+
+            line = re.sub(r"\[帖子\[(\d+)\]\](?!\()", repl_bare, line)
+
+            # 参考文献常见写法：链接(URL) → [帖子链接](URL)
+            line = re.sub(r"链接\((https?://[^\s)]+)\)", r"[帖子链接](\1)", line)
+            return line
+
+        def _convert_mermaid_bar_to_xychart(mermaid_src: str) -> str:
+            """
+            将非标准的
+              bar
+                title xxx
+                x-axis ...
+                y-axis ...
+                bar "A": 10
+            转为 mermaid@10 支持的 xychart-beta。
+            """
+            lines = [ln.rstrip() for ln in mermaid_src.splitlines()]
+            # 找到首个非空行
+            i0 = next((i for i, ln in enumerate(lines) if ln.strip()), None)
+            if i0 is None:
+                return mermaid_src
+            if lines[i0].strip() != "bar":
+                return mermaid_src
+
+            title = ""
+            y_label = "次数"
+            points: list[tuple[str, float]] = []
+            for ln in lines[i0 + 1 :]:
+                s = ln.strip()
+                if not s:
+                    continue
+                if s.startswith("title"):
+                    title = s[len("title") :].strip()
+                    continue
+                if s.startswith("y-axis"):
+                    # y-axis 次数
+                    y_label = s[len("y-axis") :].strip() or y_label
+                    continue
+                m = re.match(r'^bar\s+"?(.*?)"?\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*$', s)
+                if m:
+                    points.append((m.group(1), float(m.group(2))))
+
+            if not points:
+                return mermaid_src
+
+            labels = [p[0].replace('"', '\\"') for p in points]
+            values = [p[1] for p in points]
+            y_max = max(values) if values else 0
+            y_max_int = int(y_max) if float(y_max).is_integer() else int(y_max) + 1
+            if y_max_int <= 0:
+                y_max_int = 1
+
+            # 让 y 轴上限更“好看”
+            step = 10
+            y_max_int = ((y_max_int + step - 1) // step) * step
+
+            values_str = ", ".join(str(int(v)) if float(v).is_integer() else str(v) for v in values)
+            labels_str = ", ".join(f'"{lab}"' for lab in labels)
+            title_escaped = title.replace('"', '\\"') if title else "提及频次TOP"
+
+            return "\n".join(
+                [
+                    "xychart-beta",
+                    f'    title "{title_escaped}"',
+                    f"    x-axis [{labels_str}]",
+                    f'    y-axis "{y_label}" 0 --> {y_max_int}',
+                    f"    bar [{values_str}]",
+                ]
+            )
+
+        def _rebuild_references_section() -> str:
+            lines: list[str] = ["## 参考文献", ""]
+            for i, post in enumerate(research_data, 1):
+                url = (post.get("url") or "").strip()
+                title = (post.get("title") or "(无标题)").strip()
+                author = (post.get("author") or "").strip()
+                publish_date = (post.get("publish_date") or "").strip()
+                author = author if author else "作者未提供"
+                publish_date = publish_date if publish_date else "发布日期未提供"
+                if url:
+                    lines.append(f"[{i}] @{author}. 《{title}》. 小红书, {publish_date}. [帖子链接]({url})")
+                else:
+                    lines.append(f"[{i}] @{author}. 《{title}》. 小红书, {publish_date}. （链接缺失）")
+            return "\n".join(lines).rstrip() + "\n"
+
+        raw_lines = report.splitlines()
+        out: list[str] = []
+        in_fence = False
+        fence_lang = ""
+        mermaid_buf: list[str] = []
+
+        # 参考文献段落替换：遇到 "## 参考文献" 后，跳过直到下一个 "## " 或 EOF
+        i = 0
+        while i < len(raw_lines):
+            line = raw_lines[i]
+            if not in_fence and line.strip() == "## 参考文献":
+                out.append(_rebuild_references_section().rstrip())
+                i += 1
+                while i < len(raw_lines):
+                    nxt = raw_lines[i]
+                    if nxt.startswith("## ") and nxt.strip() != "## 参考文献":
+                        break
+                    i += 1
+                continue
+
+            if line.strip().startswith("```"):
+                if not in_fence:
+                    in_fence = True
+                    fence_lang = line.strip()[3:].strip().lower()
+                    out.append(line)
+                    if fence_lang == "mermaid":
+                        mermaid_buf = []
+                    i += 1
+                    continue
+                else:
+                    # fence close
+                    if fence_lang == "mermaid" and mermaid_buf is not None:
+                        src = "\n".join(mermaid_buf)
+                        src2 = _convert_mermaid_bar_to_xychart(src)
+                        out.append(src2)
+                        mermaid_buf = []
+                    out.append(line)
+                    in_fence = False
+                    fence_lang = ""
+                    i += 1
+                    continue
+
+            if in_fence and fence_lang == "mermaid":
+                mermaid_buf.append(line)
+                i += 1
+                continue
+
+            if in_fence:
+                out.append(line)
+                i += 1
+                continue
+
+            out.append(_fix_line(line))
+            i += 1
+
+        return "\n".join(out).rstrip() + "\n"
 
     async def _save_report(self, report: str, keyword: str):
         report_filename = self.output_dir / f"research_report_{keyword}.md"
@@ -690,144 +901,237 @@ class ResearchAgent:
             f.write(report)
         self.recorder.log("info", f"Research report saved to {report_filename}")
 
+        # 参考 data/demo.html 的模板样式：同步输出对应 HTML
+        try:
+            html_filename = self.output_dir / f"research_report_{keyword}.html"
+            html_text = render_deep_research_html(
+                report,
+                title_fallback=f"深度调研报告：{keyword}",
+                subtitle=f"基于抓取数据的深度研究 | 关键词：{keyword}",
+                generated_at=datetime.now(),
+            )
+            with open(html_filename, "w", encoding="utf-8") as f:
+                f.write(html_text)
+            self.recorder.log("info", f"Research report HTML saved to {html_filename}")
+        except Exception as e:
+            self.recorder.log("warning", f"HTML 报告输出失败（已保留 Markdown）：{e}")
+
     def _prepare_llm_prompt(self, research_data: list[dict]) -> str:
         """
-        构建 LLM 提示词：生成数据驱动的问题解决报告
-        目标：帮助用户快速获取答案，避免阅读大量帖子的焦虑
+        构建 LLM 提示词：生成专业的数据调研分析报告
+        目标：基于小红书数据生成数据鲜明、论证严谨的专业调研报告
         """
-        # 提取关键词（用户的问题）
-        keyword = research_data[0].get('url', '').split('keyword=')[-1].split('&')[0] if research_data else '未知主题'
-        try:
-            from urllib.parse import unquote
-            keyword = unquote(keyword)
-        except:
-            pass
+        def _truncate(text: str, limit: int) -> str:
+            text = (text or "").strip()
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "…"
 
-        prompt_parts = [
-            f"# 🔬 深度研究报告生成任务\n\n",
-            f"## 研究背景\n",
-            f"用户在小红书搜索了「**{keyword}**」，面临信息过载的困扰（需阅读大量帖子才能获得答案）。\n\n",
-            f"## 你的角色\n",
-            f"你是一位**专业的研究分析师**，需要以学术研究的严谨态度，基于 {len(research_data)} 篇小红书帖子及其评论数据，生成一份**循证医学级别**的深度分析报告。\n\n",
-            f"## 研究方法论\n",
-            f"- **数据来源**：{len(research_data)} 篇小红书真实用户帖子（含评论）\n",
-            f"- **分析方法**：定量统计 + 定性分析 + 内容聚类\n",
-            f"- **输出标准**：客观、量化、可验证、可操作\n",
-            f"- **研究目标**：直接解决用户问题，消除决策焦虑\n\n",
-            f"## 报告要求\n\n",
-            f"### 1. 核心结论（必须量化）\n",
-            f"- 用**具体数据**回答用户问题（例如：\"约 75% 的帖子推荐了 XX 品牌\"）\n",
-            f"- 总结**主流观点**及其**支撑理由**\n",
-            f"- 列出**少数派观点**及其**独特视角**\n",
-            f"- 标注**数据来源**：每个结论必须引用具体帖子URL\n\n",
-            f"### 2. 详细分析\n",
-            f"按以下维度深度分析：\n",
-            f"- **推荐度排名**：哪些选项被提及最多？各占比多少？\n",
-            f"- **关键选择因素**：用户最看重哪些方面？（价格/品质/功效/安全性等）\n",
-            f"- **常见误区**：用户容易踩的坑有哪些？\n",
-            f"- **争议点**：哪些方面存在不同意见？各方观点是什么？\n",
-            f"- **实用建议**：基于数据给出的可操作建议\n\n",
-            f"### 3. 数据统计表格\n",
-            f"| 维度 | 统计结果 | 占比 | 数据来源（帖子数量） |\n",
-            f"|------|----------|------|---------------------|\n",
-            f"| 示例：推荐品牌A | 15篇提及 | 75% | [帖子1](url), [帖子2](url)... |\n\n",
-            f"### 4. 评论洞察\n",
-            f"从评论区提炼：\n",
-            f"- 真实用户体验（正面/负面）\n",
-            f"- 高频提问的问题\n",
-            f"- 未被解答的疑虑\n\n",
-            f"---\n\n",
-            f"## 原始数据（共 {len(research_data)} 篇帖子）\n\n"
-        ]
+        def _safe_list(v):
+            return v if isinstance(v, list) else []
 
-        # 附加详细的帖子数据供 LLM 分析
+        # 关键词：尽量从 URL 解析（若失败则回退为“主题”）
+        keyword = "主题"
+        if research_data:
+            url0 = (research_data[0].get("url") or "").strip()
+            if "keyword=" in url0:
+                keyword = url0.split("keyword=")[-1].split("&")[0] or keyword
+                try:
+                    from urllib.parse import unquote
+                    keyword = unquote(keyword)
+                except Exception:
+                    pass
+
+        posts_cnt = len(research_data)
+        total_comments = sum(len(_safe_list(p.get("comments"))) for p in research_data)
+        posts_with_video = sum(1 for p in research_data if (p.get("video_url") or "").strip())
+        posts_with_images = sum(1 for p in research_data if len(_safe_list(p.get("image_urls"))) > 0)
+        posts_with_asr = sum(1 for p in research_data if (p.get("asr_results") or "").strip())
+        posts_with_ocr = sum(1 for p in research_data if len(_safe_list(p.get("ocr_results"))) > 0)
+        posts_with_text = sum(1 for p in research_data if (p.get("content") or "").strip())
+
+        # === 额外统计：用于“图表/对比/量化”输出（避免模型只写空洞论述） ===
+        def _collect_text(post: dict) -> str:
+            parts: list[str] = []
+            for k in ("title", "content", "asr_results"):
+                v = (post.get(k) or "").strip()
+                if v:
+                    parts.append(v)
+            ocr = _safe_list(post.get("ocr_results"))
+            if ocr:
+                parts.append(" ".join([str(x) for x in ocr if str(x).strip()]))
+            for c in _safe_list(post.get("comments")):
+                cv = (c.get("content") or "").strip()
+                if cv:
+                    parts.append(cv)
+            return "\n".join(parts)
+
+        all_text = "\n".join([_collect_text(p) for p in research_data])
+
+        # 简易“短语”抽取：用中文连续串近似（不依赖外部分词库）
+        import collections
+
+        stop = {
+            "这个", "一个", "我们", "你们", "他们", "就是", "因为", "所以", "但是", "然后", "真的", "感觉", "比较",
+            "如果", "还是", "可以", "不是", "没有", "很多", "特别", "以及", "一些", "这种", "那种", "怎么", "为什么",
+            "时候", "现在", "已经", "不会", "可能", "需要", "觉得", "问题", "内容", "评论", "帖子", "小红书", "春晚",
+        }
+        tokens = [t for t in re.findall(r"[\u4e00-\u9fff]{2,6}", all_text) if t not in stop]
+        term_counter = collections.Counter(tokens)
+
+        # term -> 出现在哪些帖子（最多给 5 个索引，方便模型引用）
+        term_posts: dict[str, list[int]] = {}
+        for term, _ in term_counter.most_common(40):
+            posts_idx = []
+            for idx, post in enumerate(research_data, 1):
+                if term in _collect_text(post):
+                    posts_idx.append(idx)
+                if len(posts_idx) >= 5:
+                    break
+            term_posts[term] = posts_idx
+
+        top_terms = term_counter.most_common(15)
+        top_terms_table = "\n".join(
+            ["| 短语 | 提及次数 | 主要来源帖子 |", "|---|---:|---|"]
+            + [
+                f"| {term} | {cnt} | {', '.join([f'帖子[{i}]' for i in term_posts.get(term, [])]) or '—'} |"
+                for term, cnt in top_terms
+            ]
+        )
+
+        # 评论互动强度：每帖评论数、点赞Top
+        per_post_stats_rows = []
         for i, post in enumerate(research_data, 1):
-            prompt_parts.append(f"### 📄 帖子 {i}\n\n")
-            prompt_parts.append(f"- **URL**: {post.get('url', 'N/A')}\n")
-            prompt_parts.append(f"- **标题**: {post.get('title', '(无标题)')}\n")
-            prompt_parts.append(f"- **类型**: {post.get('media_type', 'image')}\n\n")
-
-            # 正文内容
-            content = post.get('content', '').strip()
-            if content:
-                prompt_parts.append(f"**正文内容**：\n```\n{content}\n```\n\n")
-
-            # 视频转录（如果有）
-            asr_text = post.get('asr_results', '').strip()
-            if asr_text:
-                prompt_parts.append(f"**视频转录内容**：\n```\n{asr_text}\n```\n\n")
-
-            # OCR 结果（如果有）
-            ocr_texts = post.get('ocr_results', [])
-            if ocr_texts:
-                prompt_parts.append(f"**图片OCR识别文本**：\n```\n{' '.join(ocr_texts)}\n```\n\n")
-
-            # 图片信息
-            images = post.get('image_urls', [])
-            if images:
-                prompt_parts.append(f"**图片数量**: {len(images)} 张\n\n")
-
-            # 评论数据
-            comments = post.get('comments', [])
+            comments = _safe_list(post.get("comments"))
+            like_max = 0
             if comments:
-                prompt_parts.append(f"**评论区 ({len(comments)} 条)**：\n")
-                for idx, comment in enumerate(comments[:DEEP_RESEARCH_COMMENT_LIMIT], 1):
-                    user = comment.get('user', '匿名')
-                    content = comment.get('content', '')
-                    likes = comment.get('likes', 0)
-                    sub_comments = comment.get('sub_comments', [])
+                like_max = max(int(c.get("likes") or 0) for c in comments)
+            per_post_stats_rows.append(
+                f"| 帖子[{i}] | {len((post.get('content') or '').strip())} | {len(comments)} | {like_max} | {'视频' if (post.get('video_url') or '').strip() else '图文/图片'} |"
+            )
+        per_post_stats_table = "\n".join(
+            ["| 帖子 | 正文字数(粗略) | 评论数 | 评论最高赞 | 形态 |", "|---|---:|---:|---:|---|"]
+            + per_post_stats_rows[: min(20, len(per_post_stats_rows))]
+            + ([f"| … | … | … | … | … |"] if len(per_post_stats_rows) > 20 else [])
+        )
 
-                    prompt_parts.append(f"{idx}. **{user}**")
-                    if likes > 0:
-                        prompt_parts.append(f" (👍 {likes})")
-                    prompt_parts.append(f": {content}\n")
+        # 结构化证据包：让模型更容易“引用证据”而不是复述全文
+        evidence_blocks: list[str] = []
+        for i, post in enumerate(research_data, 1):
+            comments = _safe_list(post.get("comments"))
+            top_comments = sorted(comments, key=lambda c: int(c.get("likes") or 0), reverse=True)[:8]
 
-                    # 二级评论
-                    if sub_comments:
-                        for sub in sub_comments[:3]:  # 最多显示3条二级评论
-                            sub_user = sub.get('user', '匿名')
-                            sub_content = sub.get('content', '')
-                            prompt_parts.append(f"   └─ **{sub_user}**: {sub_content}\n")
+            top_comments_md = "\n".join(
+                [
+                    f"- （👍{int(c.get('likes') or 0)}）**{(c.get('user') or '匿名').strip()}**：{_truncate(c.get('content') or '', 160)}"
+                    for c in top_comments
+                    if (c.get("content") or "").strip()
+                ]
+            ).strip()
 
-                prompt_parts.append("\n")
-            else:
-                prompt_parts.append("**评论区**: 无评论\n\n")
+            evidence_blocks.append(
+                "\n".join(
+                    [
+                        f"### 帖子[{i}]",
+                        f"- URL：{post.get('url', 'N/A')}",
+                        f"- 正文/引用链接（必须用于报告引用）：[帖子[{i}]]({post.get('url', 'N/A')})",
+                        f"- 标题：{(post.get('title') or '(无标题)').strip()}",
+                        f"- 作者：{(post.get('author') or '(未知作者)').strip()}",
+                        f"- 发布日期：{(post.get('publish_date') or '(未知)').strip()}",
+                        f"- 媒体：{'视频' if (post.get('video_url') or '').strip() else '图文/图片'}（图片{len(_safe_list(post.get('image_urls')))}张）",
+                        f"- 正文摘录：{_truncate(post.get('content') or '', 420) or '(无正文)'}",
+                        f"- ASR摘录：{_truncate(post.get('asr_results') or '', 420) or '(无)'}",
+                        f"- OCR摘录：{_truncate(' '.join(_safe_list(post.get('ocr_results'))), 420) or '(无)'}",
+                        f"- 评论数：{len(comments)}",
+                        f"- Top评论：\n{top_comments_md if top_comments_md else '(无可用评论摘录)'}",
+                    ]
+                )
+            )
 
-            prompt_parts.append("---\n\n")
+        prompt = f"""你是一位**资深用户研究/行业分析师**。你将基于“证据包”撰写一份**深度调研报告（Markdown）**。
 
-        # 最后的指令
-        prompt_parts.append("\n## ⚠️ 重要提醒\n\n")
-        prompt_parts.append("1. **所有结论必须有数据支撑**：不能凭空推测，必须基于上述帖子内容。\n")
-        prompt_parts.append("2. **严谨引用来源与深度分析**：\n")
-        prompt_parts.append("   - 每个重要观点或数据点都必须清晰地引用其来源帖子编号（例如：**在分析XXX现象时，根据帖子[1]和[3]的反馈指出...**）。\n")
-        prompt_parts.append("   - 引用时，应将来源融入句中，作为论证的一部分，而非简单地罗列编号。\n")
-        prompt_parts.append("   - 确保每个引用的帖子内容都得到充分的解读和分析，形成有理有据的段落陈述，而不仅仅是数据展示。\n")
-        prompt_parts.append("3. **量化表达**：用百分比、具体数字描述趋势（例如：\"在 {len(research_data)} 篇帖子中，有 X 篇提到...，占比 Y%\"）。\n")
-        prompt_parts.append("4. **客观中立**：呈现多元观点，不偏袒某一立场。\n")
-        prompt_parts.append("5. **解决问题**：最终目标是帮助用户快速做出决策或获得答案。\n")
-        prompt_parts.append("6. **学术严谨**：以研究者的态度，进行深度分析和论证，提供深刻洞察。\n\n")
+## 研究主题
+{keyword}
 
-        prompt_parts.append("## 📝 报告格式要求\n\n")
-        prompt_parts.append("报告必须包含以下部分：\n\n")
-        prompt_parts.append("1. **摘要**：200字以内的核心结论\n")
-        prompt_parts.append("2. **问题背景**：用户为什么搜索这个话题\n")
-        prompt_parts.append("3. **数据统计**：量化分析（表格形式）\n")
-        prompt_parts.append("4. **详细分析**：多维度深度解读，每个分析点都需有清晰的数据支撑和引用。\n")
-        prompt_parts.append("5. **评论洞察**：从评论区提炼真实用户体验、高频提问、未被解答的疑虑。\n")
-        prompt_parts.append("6. **结论与建议**：基于数据提供可操作的决策指南，并针对常见误区和争议点给出明确建议。\n")
-        prompt_parts.append(f"7. **参考文献**：必须列出所有 {len(research_data)} 篇原始帖子的完整信息，编号从1到 {len(research_data)}，格式如下示例：\n\n")
+## 数据样本概况（必须在报告中复述并用于计算口径）
+- 样本：{posts_cnt} 篇帖子
+- 评论总量（抓取到的可见评论）：{total_comments} 条
+- 帖子形态：含视频 {posts_with_video} / 含图片 {posts_with_images}
+- 可用文本：正文可用 {posts_with_text} / ASR可用 {posts_with_asr} / OCR可用 {posts_with_ocr}
+- 研究时间：{datetime.now().strftime("%Y-%m-%d")}
 
-        prompt_parts.append("### 参考文献格式示例：\n")
-        prompt_parts.append("```\n")
-        prompt_parts.append("## 参考文献\n\n")
-        prompt_parts.append("[1] 作者名 (如果可用). 帖子标题. 小红书, 发布日期 (如果可用). [原始URL]\n")
-        prompt_parts.append("[2] 作者名 (如果可用). 帖子标题. 小红书, 发布日期 (如果可用). [原始URL]\n")
-        prompt_parts.append(f"... (共 {len(research_data)} 条)\n")
-        prompt_parts.append("```\n\n")
+## 写作协议（深度研究风格，必须严格执行）
+1. **证据链优先**：所有结论必须落到“帖子[X]”或“帖子[X]的评论”证据；无法证实时必须写“证据不足/样本外推风险”。
+2. **量化口径清晰**：所有比例/频次要说明分母（例如“在 {posts_cnt} 篇帖子中，有 8 篇提及…占比 40%”）。
+3. **反例/分歧不可缺**：每个关键结论至少给出 1 个反例或对立观点，并解释为什么出现分歧（人群/场景/成本/认知差异）。
+4. **不确定性与局限**：单列章节写出样本偏差、抓取缺失（例如登录限制、评论展示限制）、OCR/ASR噪声等。
+5. **高密度引用**：每个二级标题（`##`）至少包含 3 处引用（例如：见[帖子[3]](URL)、帖子[7]评论）；全文引用数量至少为 {max(12, posts_cnt)} 处。
+6. **可操作**：建议必须“动作+适用人群+触发条件+风险提示+证据引用”，避免泛泛而谈。
+7. **输出必须是 Markdown**，并至少包含：
+   - Mermaid 图 **至少 3 个**：分别用于（1）观点/情绪分布（pie 或 bar），（2）提及频次TOP（bar 或 xychart-beta），（3）用户决策路径（flowchart）
+   - 表格 **至少 4 个**：样本概览表、对比分析表、风险清单表、行动建议矩阵表
+8. **引用与链接格式（必须严格）**：
+   - **禁止**使用反引号包裹引用（例如不要写：`见[帖子[3]]评论`）
+   - 正文引用：必须用可点击链接，例如 `见[帖子[3]](https://...)` 或 `（来源：见[帖子[3]](URL) 评论）`
+   - 参考文献：必须是 Markdown 超链接，禁止输出纯文本 URL
 
-        prompt_parts.append("请现在开始生成报告，使用 Markdown 格式输出。\n")
+## 快速统计摘要（必须在正文中引用并用图表/表格展开）
+### 高频短语（来自抓取文本的粗粒度统计）
+{top_terms_table}
 
-        return "".join(prompt_parts)
+### 帖子层面的互动与形态（用于对比分析）
+{per_post_stats_table}
+
+## 报告结构（请按此顺序与标题层级输出，便于后续 HTML 目录生成）
+# 深度调研报告：{keyword}
+
+## 执行摘要
+- 3-5 条“结论先行”的关键发现（每条含量化与引用：帖子[X]…）
+- 3 条最重要建议（可执行）
+
+## 研究设计与方法
+- 数据来源/采集方式/样本说明
+- 分析框架（你采用的分类口径：需求/动机/顾虑/决策因子…）
+
+## 数据概览与样本画像
+- 样本结构（图文/视频、内容密度、评论活跃度）
+- 可能的人群线索（从内容与评论推断，但要写“推断”并给证据）
+
+## 核心发现（分 3-6 个小节）
+每个小节必须包含：
+- 小结论（1 句话）
+- 证据：引用帖子[X]、评论摘录（短句即可）
+- 量化：频次/占比/排序
+- 反例/分歧：至少 1 个
+
+## 观点分布与争议点（含 Mermaid）
+必须输出 2 个 Mermaid 图：
+- 图1：观点/情绪/态度分布（pie 或 bar，必须有数值）
+- 图2：提及频次TOP10（**必须用 xychart-beta**，数据源可用“高频短语表”或你基于证据计算的统计）
+
+## 用户声音（VoC）
+- Top 诉求/Top 顾虑/Top 误区（分别给引用）
+- 典型原话摘录（注明来源：帖子[X]评论）
+
+## 风险、局限与外推边界
+- 样本偏差/抓取缺失/OCR-ASR 噪声
+- 结论适用范围与不适用范围
+
+## 行动建议（分人群/分场景）
+建议采用表格呈现，并包含“适用人群、触发条件、推荐动作、风险提示、证据引用”。
+
+## 参考文献（必须覆盖全部 {posts_cnt} 篇帖子）
+- 格式示例（必须可点击）：
+  - `[1] @作者. 《标题》. 小红书, 发布日期. [帖子链接](URL)`
+  - 正文引用也建议用同一 URL：`[帖子[1]](URL)`
+
+---
+
+## 证据包（只许引用，不要在报告里复写全文）
+{chr(10).join(evidence_blocks)}
+"""
+
+        return prompt
 
 # Example usage (for testing purposes)
 async def main():

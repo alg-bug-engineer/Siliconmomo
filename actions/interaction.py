@@ -77,9 +77,9 @@ class ActionExecutor:
         await asyncio.sleep(3)
 
     async def _extract_content(self):
-        """提取帖子完整内容：标题、正文、图片、视频、评论"""
+        """提取帖子完整内容：标题、正文、作者、图片、视频、评论"""
         detail = {
-            "title": "", "content": "",
+            "title": "", "content": "", "author": "",
             "image_urls": [], "video_url": "", "video_local_path": "", "media_type": "image",
             "comments": []
         }
@@ -89,6 +89,14 @@ class ActionExecutor:
 
             if await self.page.locator(SELECTORS["detail_desc"]).count() > 0:
                 detail["content"] = await self.page.locator(SELECTORS["detail_desc"]).inner_text()
+            
+            # 提取作者信息（使用.first避免多个匹配）
+            author_locator = self.page.locator(SELECTORS["detail_author"]).first
+            if await author_locator.count() > 0:
+                try:
+                    detail["author"] = await author_locator.inner_text()
+                except:
+                    detail["author"] = ""
 
             # 增强抓取：图片、视频、评论
             if ENABLE_CONTENT_SCRAPING:
@@ -116,8 +124,9 @@ class ActionExecutor:
                 note_id = url_match.group(1) if url_match else "unknown"
 
                 media_count = len(detail["image_urls"]) if detail["media_type"] == "image" else 1
+                author_preview = detail['author'][:15] if detail['author'] else '(未知作者)'
                 self.recorder.log("info",
-                    f"📸 [抓取] ID:{note_id[:8]}... | {detail['media_type']}x{media_count} | 评论x{len(detail['comments'])}")
+                    f"📸 [抓取] ID:{note_id[:8]}... | 作者:{author_preview} | {detail['media_type']}x{media_count} | 评论x{len(detail['comments'])}")
 
         except Exception as e:
             self.recorder.log("warning", f"内容提取异常: {e}")
